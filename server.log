@@ -1,0 +1,10 @@
+
+> conectfin-bot@0.1.0 dev
+> node index.js
+
+(node:62974) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Server on :3002
+[0mPOST /webhook [32m200[0m 7.191 ms - 2[0m
+Tentando enviar via WAHA para 5532991473412@c.us: Usuário não encontrado. Cadastre seu número no Con...
+✅ Mensagem enviada via WAHA com sucesso

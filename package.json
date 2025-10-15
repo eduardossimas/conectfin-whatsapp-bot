@@ -1,0 +1,21 @@
+{
+  "name": "conectfin-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.17.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.7.4",
+    "dayjs": "^1.11.11",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "openai": "^6.3.0",
+    "pdf-parse": "^2.2.1",
+    "uuid": "^9.0.1"
+  }
+}
