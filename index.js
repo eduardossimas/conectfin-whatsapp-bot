@@ -12,6 +12,9 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
+// Importar Baileys
+import BaileysClient from './baileys-client.js';
+
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
 
@@ -46,76 +49,67 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Helpers
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ========================= WHATSAPP OUT ========================
+// ========================= WHATSAPP OUT (BAILEYS) ========================
 async function sendWhatsAppText({ to, text }) {
-  // 1) WAHA (self-hosted). Ex.: http://localhost:3000/api/sendText
-  if (process.env.WAHA_URL) {
-    try {
-      // WAHA espera chatId no formato: 5532991473412@c.us (sem o +)
-      const phoneNumber = to.replace("+", ""); // Remove o + para o WAHA
-      const chatId = phoneNumber.includes('@c.us') ? phoneNumber : `${phoneNumber}@c.us`;
-      
-      console.log(`Tentando enviar via WAHA para ${chatId}: ${text.substring(0, 50)}...`);
-      await axios.post(process.env.WAHA_URL, { 
-        session: 'default',
-        chatId, 
-        text 
-      }, {
-        timeout: 10000 // 10 segundos de timeout
-      });
-      console.log(`✅ Mensagem enviada via WAHA com sucesso`);
-      return;
-    } catch (e) {
-      if (e.code === 'ECONNREFUSED') {
-        console.error("❌ WAHA não está rodando na porta 3000. Inicie o WAHA ou desabilite a variável WAHA_URL.");
-      } else if (e.code === 'ENOTFOUND') {
-        console.error("❌ WAHA host não encontrado. Verifique a URL no .env");
-      } else {
-        console.error("❌ WAHA send error:", {
-          message: e.message,
-          code: e.code,
-          response: e?.response?.data,
-          status: e?.response?.status
+  try {
+    console.log(`📤 [SEND] Enviando via Baileys para ${to}: ${text.substring(0, 50)}...`);
+    await BaileysClient.sendText(to, text);
+    console.log(`✅ [SEND] Mensagem enviada com sucesso`);
+  } catch (error) {
+    console.error('❌ [SEND] Erro ao enviar mensagem via Baileys:', error.message);
+    
+    // Fallback para WAHA se configurado
+    if (process.env.WAHA_URL) {
+      try {
+        const phoneNumber = to.replace("+", "");
+        const chatId = phoneNumber.includes('@c.us') ? phoneNumber : `${phoneNumber}@c.us`;
+        
+        console.log(`🔄 [SEND] Tentando WAHA como fallback...`);
+        await axios.post(process.env.WAHA_URL, { 
+          session: 'default',
+          chatId, 
+          text 
+        }, {
+          timeout: 10000
         });
+        console.log(`✅ [SEND] Mensagem enviada via WAHA (fallback)`);
+        return;
+      } catch (wahaError) {
+        console.error("❌ [SEND] WAHA fallback também falhou:", wahaError.message);
       }
     }
-  }
+    
+    // Fallback para WhatsApp Cloud API se configurado
+    const isValidCloudConfig = 
+      process.env.WA_CLOUD_PHONE_ID && 
+      process.env.WA_CLOUD_TOKEN &&
+      !process.env.WA_CLOUD_PHONE_ID.includes('seu_phone_id') &&
+      !process.env.WA_CLOUD_TOKEN.includes('seu_token');
 
-  // 2) WhatsApp Cloud API - só usa se as credenciais forem válidas (não placeholders)
-  const isValidCloudConfig = 
-    process.env.WA_CLOUD_PHONE_ID && 
-    process.env.WA_CLOUD_TOKEN &&
-    !process.env.WA_CLOUD_PHONE_ID.includes('seu_phone_id') &&
-    !process.env.WA_CLOUD_TOKEN.includes('seu_token');
-
-  if (isValidCloudConfig) {
-    try {
-      console.log(`Enviando via WhatsApp Cloud API para ${to}: ${text}`);
-      const url = `https://graph.facebook.com/v20.0/${process.env.WA_CLOUD_PHONE_ID}/messages`;
-      await axios.post(
-        url,
-        {
-          messaging_product: "whatsapp",
-          to,
-          text: { body: text },
-        },
-        {
-          headers: { Authorization: `Bearer ${process.env.WA_CLOUD_TOKEN}` },
-        }
-      );
-      console.log(`✅ Mensagem enviada via WhatsApp Cloud API com sucesso`);
-      return;
-    } catch (e) {
-      console.error("WhatsApp Cloud API send error", e?.response?.data || e.message);
+    if (isValidCloudConfig) {
+      try {
+        console.log(`🔄 [SEND] Tentando WhatsApp Cloud API como fallback...`);
+        const url = `https://graph.facebook.com/v20.0/${process.env.WA_CLOUD_PHONE_ID}/messages`;
+        await axios.post(
+          url,
+          {
+            messaging_product: "whatsapp",
+            to,
+            text: { body: text },
+          },
+          {
+            headers: { Authorization: `Bearer ${process.env.WA_CLOUD_TOKEN}` },
+          }
+        );
+        console.log(`✅ [SEND] Mensagem enviada via Cloud API (fallback)`);
+        return;
+      } catch (cloudError) {
+        console.error("❌ [SEND] Cloud API fallback também falhou:", cloudError.message);
+      }
     }
+    
+    throw new Error('Falha ao enviar mensagem por todos os métodos disponíveis');
   }
-
-  // Se chegou aqui, nenhum método funcionou
-  console.warn(`⚠️ Não foi possível enviar mensagem para ${to}.`);
-  console.warn(`Opções para resolver:`);
-  console.warn(`1. Inicie o WAHA na porta 3001, ou`);
-  console.warn(`2. Configure credenciais válidas do WhatsApp Cloud API no .env, ou`);
-  console.warn(`3. Desabilite WAHA_URL no .env se não quiser usá-lo`);
 }
 
 // ========================= WAHA INBOUND ========================
@@ -670,22 +664,7 @@ async function createLancamento({
 }
 
 // ============================ WEB =============================
-app.get("/", (_req, res) => res.send("ConectFin bot ok (WAHA webhook)"));
-
-// Debug: Log todas as requisições POST em /
-app.post("/", (req, res) => {
-  console.log("⚠️ [DEBUG] POST na raiz / detectado");
-  console.log("📝 [DEBUG] Headers:", req.headers);
-  console.log("📝 [DEBUG] Body:", JSON.stringify(req.body, null, 2));
-  res.status(200).json({ 
-    message: "Requisição recebida na raiz. Use /webhook para o webhook WAHA ou /test-category para testes.",
-    endpoints: {
-      webhook: "POST /webhook",
-      test: "POST /test-category",
-      health: "GET /"
-    }
-  });
-});
+app.get("/", (_req, res) => res.send("ConectFin bot com Baileys!"));
 
 // Endpoint para testar classificação de categorias
 app.post("/test-category", async (req, res) => {
@@ -725,77 +704,24 @@ app.post("/test-category", async (req, res) => {
   }
 });
 
-// Webhook WAHA
-app.post("/webhook", async (req, res) => {
-  console.log("🔄 [WEBHOOK] Recebido webhook");
-  
-  // responda rápido ao WAHA
-  res.sendStatus(200);
-
+// ========================= HANDLER BAILEYS =========================
+async function handleWhatsAppMessage(message) {
   try {
-    const payload = req.body || {};
-    // WAHA envia dados em payload.payload ao invés de message
-    const msg = payload.payload || payload.message || {};
-    const from = normalizePhoneE164(msg.from || "");
-    const kind = detectTypeFromWAHA({ message: msg });
-
-    console.log(`📱 [WEBHOOK] Processando mensagem de ${from}, tipo: ${kind}`);
-    console.log(`📝 [WEBHOOK] Payload recebido:`, JSON.stringify(payload, null, 2));
-
+    console.log('\n🔄 [HANDLER] Processando mensagem recebida...');
+    
+    // Parsear mensagem usando Baileys
+    const parsed = await BaileysClient.parseMessage(message);
+    const { from, type, text, caption, media } = parsed;
+    
+    console.log(`📱 [HANDLER] De: ${from}, Tipo: ${type}`);
+    
     // ---------- Autorização por número ----------
     if (from !== ALLOWED_WHATSAPP) {
-      // Apenas para o processamento sem responder
       console.log(`⚠️ [AUTH] Número não autorizado: ${from}. Ignorando mensagem.`);
       return;
     }
 
     console.log(`✅ [AUTH] Número autorizado: ${from}`);
-
-    // ---------- Normalização da mensagem ----------
-    console.log(`🔍 [NORMALIZE] Iniciando normalização da mensagem`);
-    
-    let inlineData = null;
-    let caption = "";
-    let freeText = "";
-
-    if (kind === "text") {
-      freeText = msg.body || "";
-      console.log(`📝 [NORMALIZE] Texto extraído: "${freeText}"`);
-    } else if (kind === "image" || kind === "audio" || kind === "document") {
-      console.log(`🔍 [DEBUG] Conteúdo do msg.body para ${kind}:`, msg.body?.substring(0, 200) + '...');
-      console.log(`🔍 [DEBUG] msg.media:`, msg.media);
-      console.log(`🔍 [DEBUG] msg._data.Message:`, JSON.stringify(msg._data?.Message, null, 2));
-      
-      // Primeiro tenta parseDataUrl normal (base64)
-      inlineData = parseDataUrl(msg.body);
-      caption = msg.caption || "";
-      
-      // Se não funcionou e há uma URL de mídia, faz download
-      if (!inlineData && (msg.media?.url || msg.mediaUrl)) {
-        const mediaUrl = msg.media?.url || msg.mediaUrl;
-        console.log(`� [DOWNLOAD] Baixando arquivo de: ${mediaUrl}`);
-        
-        try {
-          const response = await axios.get(mediaUrl, {
-            responseType: 'arraybuffer',
-            timeout: 30000 // 30 segundos
-          });
-          
-          const buffer = Buffer.from(response.data);
-          const mime = msg.media?.mimetype || response.headers['content-type'] || 'application/octet-stream';
-          
-          inlineData = { buffer, mime };
-          console.log(`✅ [DOWNLOAD] Arquivo baixado: ${buffer.length} bytes, tipo: ${mime}`);
-          
-        } catch (downloadError) {
-          console.error(`❌ [DOWNLOAD] Erro ao baixar arquivo:`, downloadError.message);
-        }
-      }
-      
-      console.log(`🎨 [NORMALIZE] Mídia detectada - Caption: "${caption}", Data: ${inlineData ? 'presente' : 'ausente'}`);
-    }
-
-    console.log(`✅ [NORMALIZE] Normalização concluída`);
 
     // ---------- Usuário no Supabase ----------
     console.log(`🔍 [DATABASE] Buscando usuário no Supabase: ${from}`);
@@ -812,98 +738,74 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`✅ [DATABASE] Usuário encontrado: ID ${user.id}, Nome: ${user.nome || 'N/A'}`);
 
-    // ---------- Análise ----------
-    console.log(`🤖 [AI] Iniciando análise com IA - Tipo: ${kind}`);
+    // ---------- Análise com IA ----------
+    console.log(`🤖 [AI] Iniciando análise com IA - Tipo: ${type}`);
     
-    let parsed;
-    if (inlineData && kind === "audio") {
-      console.log(`🎵 [AI] Analisando áudio`);
-      parsed = await analyzeInlineAudio({
-        buffer: inlineData.buffer,
-        mime: inlineData.mime,
-      });
-    } else if (inlineData && kind === "image") {
+    let parsed_data;
+    
+    if (type === 'text') {
+      console.log(`📝 [AI] Analisando texto: "${text}"`);
+      parsed_data = await analyzeFreeText(text);
+    } else if (type === 'image' && media) {
       console.log(`🖼️ [AI] Analisando imagem`);
-      parsed = await analyzeInlineImage({
-        buffer: inlineData.buffer,
-        mime: inlineData.mime,
-        caption,
+      parsed_data = await analyzeInlineImage({
+        buffer: media.buffer,
+        mime: media.mimetype,
+        caption: caption || text
       });
-    } else if (inlineData && kind === "document") {
-      if ((inlineData.mime || "").includes("pdf")) {
+    } else if (type === 'audio' && media) {
+      console.log(`🎵 [AI] Analisando áudio`);
+      parsed_data = await analyzeInlineAudio({
+        buffer: media.buffer,
+        mime: media.mimetype
+      });
+    } else if (type === 'document' && media) {
+      if (media.mimetype.includes('pdf')) {
         console.log(`📄 [AI] Analisando PDF`);
-        parsed = await analyzeInlinePdf({ buffer: inlineData.buffer });
+        parsed_data = await analyzeInlinePdf({ buffer: media.buffer });
       } else {
-        console.log(`📄 [AI] Analisando documento como texto`);
-        parsed = await analyzeFreeText(caption || "Sem texto no documento.");
-      }
-    } else if (kind === "document" && !inlineData) {
-      // Tenta fazer download da URL se disponível
-      const mediaUrl = msg.media?.url || msg.mediaUrl || payload.payload?.media?.url;
-      
-      if (mediaUrl) {
-        console.log(`🌐 [AI] Documento via URL detectado, fazendo download...`);
-        try {
-          const downloadedData = await downloadPdfFromUrl(mediaUrl);
-          if (downloadedData.mime.includes("pdf")) {
-            console.log(`📄 [AI] Analisando PDF baixado`);
-            parsed = await analyzeInlinePdf({ buffer: downloadedData.buffer });
-          } else {
-            console.log(`📄 [AI] Analisando documento baixado como texto`);
-            parsed = await analyzeFreeText(caption || "Documento baixado sem legenda.");
-          }
-        } catch (downloadError) {
-          console.error(`❌ [AI] Erro no download do documento:`, downloadError.message);
-          await sendWhatsAppText({
-            to: from,
-            text: "❌ Não consegui baixar e processar este documento. Tente enviar novamente ou digite as informações manualmente.\n\nExemplo: 'Paguei R$ 150,00 de conta de luz hoje'"
-          });
-          return;
-        }
-      } else {
-        // Caso especial: documento detectado mas sem dados nem URL
-        console.log(`❌ [AI] Documento detectado mas sem dados nem URL. Solicitando reenvio.`);
-        await sendWhatsAppText({
-          to: from,
-          text: "❌ Não consegui processar este documento. Tente enviar novamente ou digite as informações manualmente.\n\nExemplo: 'Paguei R$ 150,00 de conta de luz hoje'"
-        });
-        return;
+        console.log(`📄 [AI] Documento não-PDF, analisando como texto`);
+        parsed_data = await analyzeFreeText(caption || text || "Documento enviado");
       }
     } else {
-      console.log(`📝 [AI] Analisando texto livre: "${freeText}"`);
-      parsed = await analyzeFreeText(freeText || "");
+      console.log(`❌ [AI] Tipo de mensagem não suportado: ${type}`);
+      await sendWhatsAppText({
+        to: from,
+        text: "❌ Tipo de mensagem não suportado. Envie texto, imagem, áudio ou PDF com informações do lançamento."
+      });
+      return;
     }
 
-    console.log(`✅ [AI] Análise concluída:`, JSON.stringify(parsed, null, 2));
+    console.log(`✅ [AI] Análise concluída:`, JSON.stringify(parsed_data, null, 2));
 
     // ---------- Normalização & defaults ----------
     console.log(`🔧 [PROCESS] Normalizando dados extraídos`);
     
     const today = dayjs().format("YYYY-MM-DD");
     const payloadOut = {
-      tipo: parsed.tipo_lancamento || "despesa",
-      descricao: parsed.descricao || (caption || freeText || "").slice(0, 140),
-      valor: parsed.valor != null ? Number(parsed.valor) : null,
-      data_competencia: parsed.data_competencia || today,
-      data_pagamento: parsed.data_pagamento || null,
-      data_vencimento: parsed.data_vencimento || null,
-      categoria_sugerida: parsed.categoria_sugerida || null,
-      needs_fix: parsed.needs_fix || false,
-      confidence: parsed.confidence || 0.0,
+      tipo: parsed_data.tipo_lancamento || "despesa",
+      descricao: parsed_data.descricao || (caption || text || "").slice(0, 140),
+      valor: parsed_data.valor != null ? Number(parsed_data.valor) : null,
+      data_competencia: parsed_data.data_competencia || today,
+      data_pagamento: parsed_data.data_pagamento || null,
+      data_vencimento: parsed_data.data_vencimento || null,
+      categoria_sugerida: parsed_data.categoria_sugerida || null,
+      needs_fix: parsed_data.needs_fix || false,
+      confidence: parsed_data.confidence || 0.0,
     };
 
     console.log(`✅ [PROCESS] Dados normalizados:`, JSON.stringify(payloadOut, null, 2));
 
     // Verificar se precisa de correção
     if (payloadOut.needs_fix) {
-      console.log(`⚠️ [PROCESS] Transação precisa de correção. Missing:`, parsed.missing);
-      console.log(`💡 [PROCESS] Sugestões:`, parsed.suggestions);
+      console.log(`⚠️ [PROCESS] Transação precisa de correção. Missing:`, parsed_data.missing);
+      console.log(`💡 [PROCESS] Sugestões:`, parsed_data.suggestions);
       
-      let errorMessage = `❌ Informações incompletas!\n\nFaltando: ${parsed.missing?.join(', ')}\n\nSugestão: ${parsed.suggestions?.join(' ')}\n\nTente novamente com mais detalhes.`;
+      let errorMessage = `❌ Informações incompletas!\n\nFaltando: ${parsed_data.missing?.join(', ')}\n\nSugestão: ${parsed_data.suggestions?.join(' ')}\n\nTente novamente com mais detalhes.`;
       
       // Se foi um documento, adiciona contexto específico
-      if (kind === "document") {
-        errorMessage = `📄 Documento processado, mas faltam informações:\n\n❌ Faltando: ${parsed.missing?.join(', ')}\n\n💡 ${parsed.suggestions?.join(' ')}\n\nVocê pode:\n• Reenviar um documento mais claro\n• Digitar as informações manualmente`;
+      if (type === "document") {
+        errorMessage = `📄 Documento processado, mas faltam informações:\n\n❌ Faltando: ${parsed_data.missing?.join(', ')}\n\n💡 ${parsed_data.suggestions?.join(' ')}\n\nVocê pode:\n• Reenviar um documento mais claro\n• Digitar as informações manualmente`;
       }
       
       await sendWhatsAppText({
@@ -991,9 +893,10 @@ app.post("/webhook", async (req, res) => {
     console.log(`📤 [SEND] Enviando confirmação: "${confirm.substring(0, 100)}..."`);
     await sendWhatsAppText({ to: from, text: confirm });
     console.log(`✅ [SEND] Confirmação enviada com sucesso!`);
-    console.log(`🎉 [WEBHOOK] Processamento concluído com sucesso!`);
+    console.log(`🎉 [HANDLER] Processamento concluído com sucesso!`);
+    
   } catch (err) {
-    console.error("💥 [ERROR] WEBHOOK ERROR:", err.message);
+    console.error("💥 [ERROR] HANDLER ERROR:", err.message);
     console.error("💥 [ERROR] Stack trace:", err.stack);
     
     // Log mais detalhado do erro
@@ -1004,7 +907,16 @@ app.post("/webhook", async (req, res) => {
     
     try {
       console.log(`📤 [ERROR] Tentando enviar mensagem de erro`);
-      const from = normalizePhoneE164(req?.body?.payload?.from || req?.body?.message?.from || "");
+      
+      // Parsear mensagem para pegar o número (se ainda não temos)
+      let from = ALLOWED_WHATSAPP;
+      try {
+        const parsed = await BaileysClient.parseMessage(message);
+        from = parsed.from;
+      } catch (parseErr) {
+        console.error("❌ [ERROR] Erro ao parsear mensagem para erro:", parseErr.message);
+      }
+      
       if (from) {
         await sleep(250);
         let errorMessage = "❌ Não consegui processar sua mensagem agora. Pode tentar novamente?";
@@ -1030,9 +942,59 @@ app.post("/webhook", async (req, res) => {
       console.error("💥 [ERROR] Erro ao enviar mensagem de erro:", sendErr.message);
     }
   }
+}
+
+// ========================== INICIALIZAÇÃO =============================
+async function startBot() {
+  console.log('\n🚀 [INICIO] Iniciando ConectFin Bot com Baileys...\n');
+  
+  // Iniciar servidor Express
+  app.listen(PORT, () => {
+    console.log(`✅ [SERVER] Servidor HTTP rodando na porta ${PORT}`);
+    console.log(`🌐 [SERVER] http://localhost:${PORT}`);
+  });
+  
+  // Iniciar Baileys
+  console.log('\n📱 [BAILEYS] Conectando ao WhatsApp...');
+  console.log('👉 [BAILEYS] Escaneie o QR Code que aparecerá abaixo:\n');
+  
+  try {
+    await BaileysClient.start();
+    
+    // Configurar handler de mensagens
+    BaileysClient.onMessage(handleWhatsAppMessage);
+    
+    console.log('\n✅ [INICIO] Bot iniciado com sucesso!');
+    console.log(`📱 [INICIO] Número autorizado: ${ALLOWED_WHATSAPP}`);
+    console.log('💡 [INICIO] Aguardando mensagens...\n');
+    
+  } catch (error) {
+    console.error('\n❌ [INICIO] Erro ao iniciar Baileys:', error);
+    console.error('💡 [INICIO] Verifique se você escaneou o QR Code corretamente\n');
+    process.exit(1);
+  }
+}
+
+// Tratamento de erros não capturados
+process.on('unhandledRejection', (error) => {
+  console.error('❌ [ERROR] Unhandled rejection:', error);
 });
 
-// ========================== START =============================
-app.listen(PORT, () => {
-  console.log(`Server on :${PORT}`);
+process.on('uncaughtException', (error) => {
+  console.error('❌ [ERROR] Uncaught exception:', error);
 });
+
+// Tratamento de encerramento gracioso
+process.on('SIGINT', async () => {
+  console.log('\n\n👋 [SHUTDOWN] Encerrando bot...');
+  try {
+    await BaileysClient.stop();
+    console.log('✅ [SHUTDOWN] Desconectado do WhatsApp');
+  } catch (error) {
+    console.error('❌ [SHUTDOWN] Erro ao desconectar:', error);
+  }
+  process.exit(0);
+});
+
+// Iniciar bot
+startBot().catch(console.error);

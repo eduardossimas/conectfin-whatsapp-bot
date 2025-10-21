@@ -61,6 +61,11 @@ jspm_packages/
 .wwebjs_cache/
 *.session.json
 
+# Baileys auth data (⚠️ MUITO IMPORTANTE - NUNCA COMMITAR!)
+baileys_auth/
+baileys_auth_*/
+*.creds.json
+
 # PDF temp files (se houver)
 temp_*.pdf
 downloads/*.pdf
