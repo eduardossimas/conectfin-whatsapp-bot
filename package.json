@@ -24,5 +24,8 @@
     "pino": "^10.1.0",
     "qrcode-terminal": "^0.12.0",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@flydotio/dockerfile": "^0.7.10"
   }
 }
