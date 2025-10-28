@@ -22,7 +22,7 @@ Sua função é interpretar uma mensagem livre em português do Brasil (WhatsApp
 - Se o texto falar em pagamento parcial ("metade do aluguel"), assuma o valor informado como total do lançamento.
 
 ### Tipo de lançamento
-- Despesa se contiver palavras/sinais: -, "compra", "paguei", "pago", "gastei", "conta", "fatura", "boleto".
+- Despesa se contiver palavras/sinais: -, "compra", "paguei", "pago", "gastei", "conta", "fatura", "boleto", "pagamento".
 - Receita se contiver: +, "receita", "recebi", "entrou", "venda", "vendeu", "vendi", "cliente pagou", "faturei", "serviço prestado".
 - Se não houver segurança, deixe null e marque needs_fix=true.
 
@@ -35,7 +35,7 @@ Sua função é interpretar uma mensagem livre em português do Brasil (WhatsApp
 ### Categoria sugerida
 Retorne em categoria_sugerida a melhor correspondência seguindo estas diretrizes:
 
-**DESPESAS FIXAS:** Internet, Telefone, Energia Elétrica, Água, Gás, Aluguel, Condomínio, IPTU, Seguro Saúde, Financiamentos, Assinaturas
+**DESPESAS FIXAS:** Internet, Salários, Telefone, Energia Elétrica, Água, Gás, Aluguel, Condomínio, IPTU, Seguro Saúde, Financiamentos, Assinaturas
 
 **DESPESAS VARIÁVEIS:** Supermercado, Combustível, Restaurante, Farmácia, Vestuário, Lazer
 

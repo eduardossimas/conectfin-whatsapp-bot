@@ -6,10 +6,98 @@ import makeWASocket, {
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
+import { readdir, unlink, stat } from 'fs/promises';
+import { join } from 'path';
 
 // ======================= CONFIGURAÇÃO =======================
 let sock = null;
 let messageHandler = null;
+
+// ======================= LIMPEZA DE CACHE =======================
+
+/**
+ * Limpa arquivos de sincronização antigos da pasta baileys_auth
+ * Mantém apenas os arquivos essenciais (creds.json e arquivos recentes)
+ */
+async function cleanAuthCache() {
+  try {
+    const authDir = 'baileys_auth';
+    const files = await readdir(authDir);
+    
+    // Arquivos CRÍTICOS que NUNCA devem ser deletados
+    const criticalFiles = [
+      'creds.json',
+      'app-state-sync-version-critical_block.json',
+      'app-state-sync-version-critical_unblock_low.json',
+      'app-state-sync-version-regular_high.json',
+      'app-state-sync-version-regular.json'
+    ];
+    
+    // Filtrar arquivos por tipo (excluindo críticos)
+    const preKeys = files.filter(f => f.startsWith('pre-key-') && !criticalFiles.includes(f));
+    const syncKeys = files.filter(f => f.startsWith('app-state-sync-key-') && !criticalFiles.includes(f));
+    
+    let totalRemoved = 0;
+    
+    // 1. Limpar pre-keys excessivos (manter apenas 200 mais recentes)
+    if (preKeys.length > 300) {
+      console.log(`🧹 [BAILEYS] Limpando pre-keys: ${preKeys.length} arquivos`);
+      const removed = await cleanFilesByAge(authDir, preKeys, 200);
+      totalRemoved += removed;
+      console.log(`  ✅ ${removed} pre-keys removidos, 200 mantidos`);
+    }
+    
+    // 2. Limpar app-state-sync-keys antigos (manter apenas 20 mais recentes)
+    if (syncKeys.length > 30) {
+      console.log(`🧹 [BAILEYS] Limpando sync-keys: ${syncKeys.length} arquivos`);
+      const removed = await cleanFilesByAge(authDir, syncKeys, 20);
+      totalRemoved += removed;
+      console.log(`  ✅ ${removed} sync-keys removidos, 20 mantidos`);
+    }
+    
+    if (totalRemoved > 0) {
+      console.log(`✅ [BAILEYS] Cache limpo: ${totalRemoved} arquivos removidos no total`);
+    } else {
+      console.log(`✅ [BAILEYS] Cache OK: pre-keys(${preKeys.length}), sync-keys(${syncKeys.length})`);
+    }
+  } catch (error) {
+    console.error('❌ [BAILEYS] Erro ao limpar cache:', error.message);
+  }
+}
+
+/**
+ * Limpa arquivos por idade (mantém os N mais recentes)
+ */
+async function cleanFilesByAge(dir, files, keepCount) {
+  if (files.length <= keepCount) return 0;
+  
+  // Pega informações de data de cada arquivo
+  const filesWithStats = await Promise.all(
+    files.map(async (file) => {
+      const filePath = join(dir, file);
+      const stats = await stat(filePath);
+      return { file, mtime: stats.mtime, path: filePath };
+    })
+  );
+  
+  // Ordena por data (mais recentes primeiro)
+  filesWithStats.sort((a, b) => b.mtime - a.mtime);
+  
+  // Mantém os N mais recentes, deleta o resto
+  const filesToDelete = filesWithStats.slice(keepCount);
+  
+  let removed = 0;
+  for (const { path, file } of filesToDelete) {
+    try {
+      await unlink(path);
+      removed++;
+    } catch (err) {
+      console.log(`  ⚠️ Erro ao remover ${file}:`, err.message);
+    }
+  }
+  
+  return removed;
+}
 
 // ======================= FUNÇÕES AUXILIARES =======================
 
@@ -138,14 +226,24 @@ async function downloadMedia(message) {
  */
 export async function startBaileys() {
   return new Promise(async (resolve, reject) => {
+    // Limpar cache antes de conectar
+    await cleanAuthCache();
+    
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
     
-  sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true, // Mostra QR code no terminal
-    logger: pino({ level: 'silent' }), // Desativa logs do Baileys
-    browser: ['ConectFin Bot', 'Chrome', '120.0.0'], // Identifica o bot
-  });    // ======================= EVENTOS =======================
+    sock = makeWASocket({
+      auth: state,
+      // Removido printQRInTerminal pois está depreciado
+      logger: pino({ level: 'silent' }), // Desativa logs do Baileys
+      browser: ['ConectFin Bot', 'Chrome', '120.0.0'], // Identifica o bot
+      connectTimeoutMs: 60000, // Timeout de 60 segundos
+      defaultQueryTimeoutMs: undefined,
+      keepAliveIntervalMs: 30000,
+      emitOwnEvents: false,
+      markOnlineOnConnect: true,
+    });
+    
+    // ======================= EVENTOS =======================
     
     // Evento: Atualização de credenciais
     sock.ev.on('creds.update', saveCreds);
@@ -155,30 +253,56 @@ export async function startBaileys() {
       const { connection, lastDisconnect, qr } = update;
       
       if (qr) {
-        console.log('\n📱 [BAILEYS] Escaneie o QR Code abaixo com seu WhatsApp:\n');
+        console.log('\n📱 [BAILEYS] QR CODE GERADO! Escaneie agora:\n');
         qrcode.generate(qr, { small: true });
-        console.log('\n👆 Abra o WhatsApp no celular > Dispositivos conectados > Conectar dispositivo\n');
+        console.log('\n👆 Como escanear:');
+        console.log('1. Abra o WhatsApp no seu celular');
+        console.log('2. Toque em "Mais opções" (⋮) ou "Configurações" (⚙️)');
+        console.log('3. Toque em "Aparelhos conectados"');
+        console.log('4. Toque em "Conectar um aparelho"');
+        console.log('5. Aponte a câmera para o QR Code acima\n');
+        console.log('⏳ Aguardando escaneamento...\n');
+      }
+      
+      if (connection === 'connecting') {
+        console.log('🔄 [BAILEYS] Conectando ao WhatsApp...');
       }
       
       if (connection === 'close') {
         const shouldReconnect = (lastDisconnect?.error instanceof Boom) &&
           lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
         
-        console.log('❌ [BAILEYS] Conexão fechada. Reconectar?', shouldReconnect);
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const reason = DisconnectReason[statusCode] || 'desconhecido';
+        
+        console.log(`❌ [BAILEYS] Conexão fechada. Motivo: ${reason} (${statusCode})`);
+        console.log('🔄 [BAILEYS] Reconectar?', shouldReconnect);
         
         if (shouldReconnect) {
-          console.log('🔄 [BAILEYS] Reconectando...');
-          await startBaileys();
+          console.log('🔄 [BAILEYS] Reconectando em 3 segundos...');
+          setTimeout(() => {
+            startBaileys().then(resolve).catch(reject);
+          }, 3000);
         } else {
           console.log('🚪 [BAILEYS] Desconectado. Execute novamente para reconectar.');
-          reject(new Error('Desconectado do WhatsApp'));
+          reject(new Error(`Desconectado do WhatsApp: ${reason}`));
         }
       }
       
       if (connection === 'open') {
-        console.log('✅ [BAILEYS] Conectado ao WhatsApp!');
+        console.log('\n✅ [BAILEYS] ========================================');
+        console.log('✅ [BAILEYS] CONECTADO AO WHATSAPP COM SUCESSO!');
+        console.log('✅ [BAILEYS] ========================================');
         console.log('📱 [BAILEYS] Número:', sock.user?.id);
-        console.log('📝 [BAILEYS] Nome:', sock.user?.name);
+        console.log('📝 [BAILEYS] Nome:', sock.user?.name || 'N/A');
+        console.log('✅ [BAILEYS] ========================================\n');
+        
+        // Limpar cache periodicamente a cada 6 horas
+        setInterval(() => {
+          console.log('\n🧹 [BAILEYS] Executando limpeza periódica de cache...');
+          cleanAuthCache();
+        }, 6 * 60 * 60 * 1000); // 6 horas
+        
         resolve(sock);
       }
     });
@@ -234,6 +358,30 @@ export async function sendText(to, text) {
   await sock.sendMessage(jid, { text });
   
   console.log('✅ [BAILEYS] Mensagem enviada!');
+}
+
+/**
+ * Envia imagem via WhatsApp
+ * 
+ * @param {string} to - Número de destino (formato E.164 ou com @s.whatsapp.net)
+ * @param {Buffer} imageBuffer - Buffer da imagem
+ * @param {string} caption - Legenda opcional
+ */
+export async function sendImage(to, imageBuffer, caption = '') {
+  if (!sock) {
+    throw new Error('WhatsApp não conectado. Execute startBaileys() primeiro.');
+  }
+  
+  const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);
+  
+  console.log(`📤 [BAILEYS] Enviando imagem para ${jid} (${imageBuffer.length} bytes)`);
+  
+  await sock.sendMessage(jid, { 
+    image: imageBuffer,
+    caption: caption
+  });
+  
+  console.log('✅ [BAILEYS] Imagem enviada!');
 }
 
 /**
@@ -299,6 +447,7 @@ export default {
   stop: stopBaileys,
   onMessage,
   sendText,
+  sendImage,
   parseMessage,
   getSocket
 };
