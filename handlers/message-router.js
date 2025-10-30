@@ -4,7 +4,7 @@
 
 import { classifyIntent } from "../services/ai-service.js";
 import { getUserByPhone } from "../services/database-service.js";
-import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service.js";
+import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service-unified.js";
 import { sleep, normalizePhoneE164 } from "../utils/helpers.js";
 import { config } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
@@ -19,42 +19,39 @@ import { handleCashFlowReport } from "./cashflow-handler.js";
  * Handler principal de mensagens do WhatsApp
  * Classifica intenção e roteia para o handler apropriado
  * 
- * @param {Object} message - Mensagem bruta do Baileys
+ * @param {Object} message - Mensagem bruta do Baileys OU já parseada do WABA
  */
 export async function handleWhatsAppMessage(message) {
   try {
     console.log('\n🔄 [ROUTER] Processando mensagem recebida...');
     
-    // ============ 1. PARSEAR MENSAGEM ============
-    const parsed = await BaileysClient.parseMessage(message);
+    // ============ 1. PARSEAR MENSAGEM (se necessário) ============
+    // Se já tem 'from', 'type', 'text' é porque já está parseada (WABA)
+    let parsed;
+    if (message.from && message.type !== undefined) {
+      console.log('📦 [ROUTER] Mensagem já parseada (WABA mode)');
+      parsed = message;
+    } else {
+      console.log('📦 [ROUTER] Parseando mensagem (Baileys mode)');
+      parsed = await BaileysClient.parseMessage(message);
+    }
+    
     const { from, type, text, caption } = parsed;
     
     console.log(`📱 [ROUTER] De: ${from}, Tipo: ${type}`);
     
-    // ============ 2. AUTORIZAÇÃO POR NÚMERO ============
-    if (from !== config.ALLOWED_WHATSAPP) {
-      console.log(`⚠️ [AUTH] Número não autorizado: ${from}. Ignorando mensagem.`);
-      return;
-    }
-
-    console.log(`✅ [AUTH] Número autorizado: ${from}`);
-
-    // ============ 3. BUSCAR USUÁRIO NO SUPABASE ============
+    // ============ 2. BUSCAR USUÁRIO NO SUPABASE ============
     console.log(`🔍 [ROUTER] Buscando usuário no Supabase: ${from}`);
     const user = await getUserByPhone(from);
     
     if (!user) {
-      console.log(`❌ [ROUTER] Usuário não encontrado: ${from}`);
-      await sendWhatsAppText(
-        from,
-        "❌ Usuário não encontrado.\n\nPor favor, cadastre seu número no ConectFin primeiro."
-      );
+      console.log(`⚠️ [ROUTER] Usuário não encontrado: ${from}. Ignorando mensagem silenciosamente.`);
       return;
     }
 
     console.log(`✅ [ROUTER] Usuário encontrado: ID ${user.id}, Nome: ${user.nome || 'N/A'}`);
 
-    // ============ 4. CLASSIFICAR INTENÇÃO ============
+    // ============ 3. CLASSIFICAR INTENÇÃO ============
     // Para mensagens de texto, classifica intenção
     // Para mensagens de mídia, assume criação de transação
     let intent = 'create_transaction'; // Default para mídias
@@ -69,7 +66,7 @@ export async function handleWhatsAppMessage(message) {
       console.log(`📎 [ROUTER] Mensagem de mídia detectada, assumindo intenção: create_transaction`);
     }
 
-    // ============ 5. ROTEAR PARA O HANDLER APROPRIADO ============
+    // ============ 4. ROTEAR PARA O HANDLER APROPRIADO ============
     console.log(`🚦 [ROUTER] Roteando para handler: ${intent}`);
     
     switch (intent) {
@@ -127,13 +124,20 @@ export async function handleWhatsAppMessage(message) {
     try {
       console.log(`📤 [ROUTER] Tentando enviar mensagem de erro`);
       
-      // Parsear mensagem para pegar o número (se ainda não temos)
+      // Tentar extrair o número da mensagem (já parseada ou não)
       let from = config.ALLOWED_WHATSAPP;
-      try {
-        const parsed = await BaileysClient.parseMessage(message);
-        from = parsed.from;
-      } catch (parseErr) {
-        console.error("❌ [ROUTER] Erro ao parsear mensagem para erro:", parseErr.message);
+      
+      if (message.from) {
+        // Mensagem já parseada (WABA)
+        from = message.from;
+      } else {
+        // Mensagem Baileys, tentar parsear
+        try {
+          const parsed = await BaileysClient.parseMessage(message);
+          from = parsed.from;
+        } catch (parseErr) {
+          console.error("❌ [ROUTER] Erro ao parsear mensagem para erro:", parseErr.message);
+        }
       }
       
       if (from) {

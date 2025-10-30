@@ -6,7 +6,7 @@ import {
   getContasAPagar, 
   getContasAReceber 
 } from "../services/database-service.js";
-import { sendWhatsAppText } from "../services/whatsapp-service.js";
+import { sendWhatsAppText } from "../services/whatsapp-service-unified.js";
 import { formatCurrency, formatDate } from "../utils/helpers.js";
 
 /**

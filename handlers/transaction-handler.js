@@ -12,7 +12,7 @@ import {
   supabase 
 } from "../services/database-service.js";
 import { findBestCategory } from "../services/ai-service.js";
-import { sendWhatsAppText } from "../services/whatsapp-service.js";
+import { sendWhatsAppText } from "../services/whatsapp-service-unified.js";
 import { formatCurrency, formatDate } from "../utils/helpers.js";
 import { 
   analyzeInlineAudio, 

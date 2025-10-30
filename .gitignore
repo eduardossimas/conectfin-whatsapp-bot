@@ -18,7 +18,8 @@ pnpm-debug.log*
 logs/
 *.log
 
-# Runtime data
+# PM2
+.pm2/
 pids/
 *.pid
 *.seed

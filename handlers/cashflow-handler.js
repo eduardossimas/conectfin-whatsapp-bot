@@ -3,7 +3,7 @@
  * Gera relatório visual de fluxo de caixa mensal
  */
 
-import { sendWhatsAppText, sendWhatsAppImage } from '../services/whatsapp-service.js';
+import { sendWhatsAppText, sendWhatsAppImage } from '../services/whatsapp-service-unified.js';
 import { getUserByPhone, getLancamentosParaFluxoCaixa } from '../services/database-service.js';
 import { gerarGraficoFluxoCaixa } from '../services/chart-service-svg.js'; // NOVO: usando canvas puro
 import dayjs from 'dayjs';

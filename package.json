@@ -6,8 +6,23 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "baileys": "node index-baileys.js",
-    "test-baileys": "node test-baileys.js"
+    "unified": "node index-unified.js",
+    "baileys": "WHATSAPP_MODE=baileys node index-unified.js",
+    "waba": "WHATSAPP_MODE=waba node index-unified.js",
+    "test-baileys": "node test-baileys.js",
+    "setup": "node setup.js",
+    "ngrok": "./start-with-ngrok.sh",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop conectfin-bot",
+    "pm2:restart": "pm2 restart conectfin-bot",
+    "pm2:delete": "pm2 delete conectfin-bot",
+    "pm2:logs": "pm2 logs conectfin-bot --lines 100",
+    "pm2:logs:live": "pm2 logs conectfin-bot",
+    "pm2:monit": "pm2 monit",
+    "pm2:status": "pm2 status",
+    "pm2:save": "pm2 save",
+    "pm2:startup": "pm2 startup",
+    "pm2:flush": "pm2 flush"
   },
   "dependencies": {
     "@google/generative-ai": "^0.17.0",

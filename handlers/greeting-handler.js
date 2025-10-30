@@ -2,7 +2,7 @@
  * Handler de Saudações - Responde a cumprimentos e pedidos de ajuda
  */
 
-import { sendWhatsAppText } from "../services/whatsapp-service.js";
+import { sendWhatsAppText } from "../services/whatsapp-service-unified.js";
 
 /**
  * Processa saudações e pedidos de ajuda
