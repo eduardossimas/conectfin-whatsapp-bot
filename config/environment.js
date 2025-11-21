@@ -45,7 +45,7 @@ export const config = {
   
   // AI Models
   OPENAI_MODEL: "gpt-4o-mini",
-  GEMINI_PRIMARY: "gemini-2.0-flash-exp",
+  GEMINI_PRIMARY: "gemini-2.0-flash-lite",
   GEMINI_FALLBACK: "gemini-1.5-flash",
   
   // User
