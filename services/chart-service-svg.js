@@ -1,6 +1,5 @@
 /**
  * Serviço de Geração de Gráficos usando SVG puro
- * Implementação simples e confiável
  */
 
 import dayjs from 'dayjs';
