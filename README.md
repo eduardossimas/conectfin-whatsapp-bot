@@ -23,7 +23,7 @@ Bot de WhatsApp que permite gerenciar finanças pelo celular usando **IA para en
 ### Tecnologias:
 - **Baileys** - Conexão com WhatsApp Web
 - **OpenAI/Gemini** - Inteligência Artificial
-- **Supabase** - Banco de dados
+- **API REST** - Integração com ConectFin
 - **Node.js** - Backend
 
 ---
@@ -92,9 +92,10 @@ Crie arquivo `.env` na raiz:
 # Servidor
 PORT=3000
 
-# Supabase
-SUPABASE_URL=https://seu-projeto.supabase.co
-SUPABASE_SERVICE_ROLE=sua-service-key
+# ConectFin API
+API_BASE_URL=https://api.conectfin.com.br
+API_EMAIL=seu-email@dominio.com
+API_PASSWORD=sua-senha-segura
 
 # IA (configure pelo menos uma)
 GEMINI_API_KEY=sua-chave-gemini
@@ -120,9 +121,12 @@ Edite `config/environment.js` e defina o número autorizado:
 ALLOWED_WHATSAPP: "+5532991473412", // Seu número aqui
 ```
 
-### 2. Usuário no Banco
+### 2. Usuário no Sistema
 
-O número do WhatsApp deve estar cadastrado na tabela `users` do Supabase com o campo `phone_e164` no formato: `+5532991473412`
+O usuário deve:
+1. Estar cadastrado no sistema ConectFin
+2. Ter vinculado o número do WhatsApp no perfil (formato E.164: `+5532991473412`)
+3. Ter configurado as credenciais (email/senha) no `.env` do bot
 
 ### 3. Bancos e Categorias
 
@@ -201,7 +205,8 @@ config/environment.js       → Configurações centralizadas
 services/
 ├── ai-service.js           → Chamadas IA (OpenAI/Gemini)
 ├── whatsapp-service.js     → Envio de mensagens
-└── database-service.js     → Operações Supabase
+├── api-client.js           → Cliente HTTP para API ConectFin
+└── database-service.js     → Camada de abstração para dados
 ```
 
 ### Handlers (Processadores):
@@ -281,8 +286,9 @@ O bot mostra logs detalhados:
 ### Bot não responde:
 
 1. Verifique se número está autorizado em `config/environment.js`
-2. Verifique se usuário existe no Supabase com `phone_e164` correto
-3. Verifique logs no terminal
+2. Verifique se usuário existe no sistema ConectFin com telefone vinculado
+3. Verifique se credenciais da API estão corretas no `.env`
+4. Verifique logs no terminal
 
 ### Erro "Nenhum banco encontrado":
 
@@ -315,7 +321,7 @@ Se ainda ocorrer:
 - ❌ Arquivo `.env`
 - ❌ Pasta `baileys_auth/`
 - ❌ Arquivo `baileys_auth/creds.json`
-- ❌ Chaves de API (OpenAI, Gemini, Supabase)
+- ❌ Chaves de API (OpenAI, Gemini, ConectFin)
 
 ### ✅ Já configurado no `.gitignore`:
 

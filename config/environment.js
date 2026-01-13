@@ -2,7 +2,7 @@ import "dotenv/config";
 
 export const config = {
   // Server
-  PORT: Number(process.env.PORT || 3000),
+  PORT: Number(process.env.PORT || 3001),
   
   // WhatsApp Mode
   WHATSAPP_MODE: process.env.WHATSAPP_MODE || 'baileys', // 'baileys' ou 'waba'
@@ -35,9 +35,10 @@ export const config = {
   MEDIA_STORAGE: process.env.MEDIA_STORAGE || 'local',
   MEDIA_RETENTION_DAYS: Number(process.env.MEDIA_RETENTION_DAYS || 7),
   
-  // Supabase
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE: process.env.SUPABASE_SERVICE_ROLE,
+  // ConectFin API
+  API_BASE_URL: process.env.API_BASE_URL || 'https://api.conectfin.com.br',
+  API_EMAIL: process.env.API_EMAIL,
+  API_PASSWORD: process.env.API_PASSWORD,
   
   // AI
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
@@ -47,7 +48,4 @@ export const config = {
   OPENAI_MODEL: "gpt-4o-mini",
   GEMINI_PRIMARY: "gemini-2.0-flash-lite",
   GEMINI_FALLBACK: "gemini-1.5-flash",
-  
-  // User
-  USER_ID: "5b15bf69-c0ba-4959-a1fc-cb5c1cd32e73",
 };

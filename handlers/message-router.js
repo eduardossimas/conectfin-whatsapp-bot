@@ -40,8 +40,8 @@ export async function handleWhatsAppMessage(message) {
     
     console.log(`📱 [ROUTER] De: ${from}, Tipo: ${type}`);
     
-    // ============ 2. BUSCAR USUÁRIO NO SUPABASE ============
-    console.log(`🔍 [ROUTER] Buscando usuário no Supabase: ${from}`);
+    // ============ 2. BUSCAR USUÁRIO NA API ============
+    console.log(`🔍 [ROUTER] Buscando usuário na API: ${from}`);
     const user = await getUserByPhone(from);
     
     if (!user) {

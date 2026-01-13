@@ -8,8 +8,7 @@ import utc from "dayjs/plugin/utc.js";
 import { 
   getBancoIdPadrao, 
   getAllUserCategorias, 
-  createLancamento,
-  supabase 
+  createLancamento
 } from "../services/database-service.js";
 import { findBestCategory } from "../services/ai-service.js";
 import { sendWhatsAppText } from "../services/whatsapp-service-unified.js";
@@ -164,13 +163,6 @@ export async function handleCreateTransaction(from, user, message) {
     // ============ 8. MENSAGEM DE CONFIRMAÇÃO ============
     console.log(`📤 [TRANSACTION] Preparando mensagem de confirmação`);
     
-    // Buscar nome do banco usado
-    const { data: bancoUsado } = await supabase
-      .from("bancos")
-      .select("nome_banco, is_principal")
-      .eq("id", id_banco)
-      .single();
-    
     const confirm = [
       `✅ Lançamento criado!`,
       ``,
@@ -181,7 +173,6 @@ export async function handleCreateTransaction(from, user, message) {
       payloadOut.data_pagamento ? `• *Data pagamento:* ${formatDate(payloadOut.data_pagamento)}` : null,
       payloadOut.data_vencimento ? `• *Data vencimento:* ${formatDate(payloadOut.data_vencimento)}` : null,
       `• *Categoria:* ${categoriaEscolhida?.nome || `#${id_categoria}`}`,
-      `• *Banco:* ${bancoUsado?.nome_banco || "N/A"}${bancoUsado?.is_principal ? " ⭐" : ""}`,
       ``,
       `_ID: ${lanc.id}_`,
     ].filter(Boolean).join("\n");
