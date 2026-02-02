@@ -45,7 +45,7 @@ export const config = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   
   // AI Models
-  OPENAI_MODEL: "gpt-4o-mini",
+  OPENAI_MODEL: "gpt-4.1-mini",
   GEMINI_PRIMARY: "gemini-2.0-flash-lite",
   GEMINI_FALLBACK: "gemini-1.5-flash",
 };

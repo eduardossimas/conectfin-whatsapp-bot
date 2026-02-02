@@ -6,12 +6,68 @@ import makeWASocket, {
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
-import { readdir, unlink, stat } from 'fs/promises';
+import { readdir, unlink, stat, readFile } from 'fs/promises';
 import { join } from 'path';
 
 // ======================= CONFIGURAÇÃO =======================
 let sock = null;
 let messageHandler = null;
+
+// Cache de mapeamento LID -> número real
+let lidMappingCache = {};
+
+// Controle de tentativas de reconexão
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_INTERVAL_MS = 5000;
+
+/**
+ * Carrega os mapeamentos de LID para números reais
+ */
+async function loadLidMappings() {
+  try {
+    const authDir = 'baileys_auth';
+    const files = await readdir(authDir);
+    
+    // Procurar arquivos lid-mapping-*_reverse.json
+    const reverseMappings = files.filter(f => f.startsWith('lid-mapping-') && f.endsWith('_reverse.json'));
+    
+    for (const file of reverseMappings) {
+      try {
+        const content = await readFile(join(authDir, file), 'utf-8');
+        // Extrair o LID do nome do arquivo: lid-mapping-XXXXX_reverse.json
+        const lid = file.replace('lid-mapping-', '').replace('_reverse.json', '');
+        const phoneNumber = JSON.parse(content);
+        lidMappingCache[lid] = phoneNumber;
+        console.log(`📍 [BAILEYS] LID mapeado: ${lid} -> ${phoneNumber}`);
+      } catch (e) {
+        // Ignorar arquivos inválidos
+      }
+    }
+    
+    // Também carregar mapeamentos diretos: lid-mapping-NUMERO.json -> LID
+    const directMappings = files.filter(f => f.startsWith('lid-mapping-') && !f.endsWith('_reverse.json'));
+    
+    for (const file of directMappings) {
+      try {
+        const content = await readFile(join(authDir, file), 'utf-8');
+        // Extrair o número do nome do arquivo: lid-mapping-553291473412.json
+        const phoneNumber = file.replace('lid-mapping-', '').replace('.json', '');
+        const lid = JSON.parse(content);
+        if (!lidMappingCache[lid]) {
+          lidMappingCache[lid] = phoneNumber;
+          console.log(`📍 [BAILEYS] LID mapeado (reverso): ${lid} -> ${phoneNumber}`);
+        }
+      } catch (e) {
+        // Ignorar arquivos inválidos
+      }
+    }
+    
+    console.log(`✅ [BAILEYS] ${Object.keys(lidMappingCache).length} mapeamentos de LID carregados`);
+  } catch (error) {
+    console.warn(`⚠️ [BAILEYS] Erro ao carregar mapeamentos LID:`, error.message);
+  }
+}
 
 // ======================= LIMPEZA DE CACHE =======================
 
@@ -24,18 +80,29 @@ async function cleanAuthCache() {
     const authDir = 'baileys_auth';
     const files = await readdir(authDir);
     
-    // Arquivos CRÍTICOS que NUNCA devem ser deletados
-    const criticalFiles = [
-      'creds.json',
-      'app-state-sync-version-critical_block.json',
-      'app-state-sync-version-critical_unblock_low.json',
-      'app-state-sync-version-regular_high.json',
-      'app-state-sync-version-regular.json'
-    ];
+    // Arquivos/padrões CRÍTICOS que NUNCA devem ser deletados
+    const isCriticalFile = (filename) => {
+      // Credenciais principais
+      if (filename === 'creds.json') return true;
+      
+      // Versões de sincronização
+      if (filename.startsWith('app-state-sync-version-')) return true;
+      
+      // Mapeamentos de LID (importantes para resolver números)
+      if (filename.startsWith('lid-mapping-')) return true;
+      
+      // Lista de dispositivos
+      if (filename.startsWith('device-list-')) return true;
+      
+      // Sessões ativas
+      if (filename.startsWith('session-')) return true;
+      
+      return false;
+    };
     
     // Filtrar arquivos por tipo (excluindo críticos)
-    const preKeys = files.filter(f => f.startsWith('pre-key-') && !criticalFiles.includes(f));
-    const syncKeys = files.filter(f => f.startsWith('app-state-sync-key-') && !criticalFiles.includes(f));
+    const preKeys = files.filter(f => f.startsWith('pre-key-') && !isCriticalFile(f));
+    const syncKeys = files.filter(f => f.startsWith('app-state-sync-key-') && !isCriticalFile(f));
     
     let totalRemoved = 0;
     
@@ -61,6 +128,11 @@ async function cleanAuthCache() {
       console.log(`✅ [BAILEYS] Cache OK: pre-keys(${preKeys.length}), sync-keys(${syncKeys.length})`);
     }
   } catch (error) {
+    // Se a pasta não existir, não é erro
+    if (error.code === 'ENOENT') {
+      console.log(`📁 [BAILEYS] Pasta baileys_auth será criada na primeira conexão`);
+      return;
+    }
     console.error('❌ [BAILEYS] Erro ao limpar cache:', error.message);
   }
 }
@@ -121,8 +193,25 @@ function formatPhoneToWhatsApp(phone) {
 /**
  * Normaliza número do WhatsApp para formato E.164
  * Exemplo: 5532991473412@s.whatsapp.net -> +5532991473412
+ * Também resolve LIDs: 21981743317016@lid -> +553291473412
  */
 function formatWhatsAppToE164(jid) {
+  // Verificar se é um LID
+  if (jid.endsWith('@lid')) {
+    const lid = jid.replace('@lid', '');
+    
+    // Verificar se temos mapeamento para este LID
+    if (lidMappingCache[lid]) {
+      const realNumber = lidMappingCache[lid];
+      console.log(`🔄 [BAILEYS] Resolvendo LID: ${lid} -> ${realNumber}`);
+      return `+${realNumber}`;
+    }
+    
+    console.warn(`⚠️ [BAILEYS] LID não mapeado: ${lid}`);
+    // Retornar mesmo assim, mas vai falhar na busca do usuário
+    return `+${lid}@lid`;
+  }
+  
   // Remove @s.whatsapp.net e @c.us
   const digits = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
   return `+${digits}`;
@@ -229,6 +318,9 @@ export async function startBaileys() {
     // Limpar cache antes de conectar
     await cleanAuthCache();
     
+    // Carregar mapeamentos de LID
+    await loadLidMappings();
+    
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
     
     sock = makeWASocket({
@@ -269,20 +361,64 @@ export async function startBaileys() {
       }
       
       if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect?.error instanceof Boom) &&
-          lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const reason = DisconnectReason[statusCode] || 'desconhecido';
         
         console.log(`❌ [BAILEYS] Conexão fechada. Motivo: ${reason} (${statusCode})`);
+        
+        // Determinar se deve reconectar baseado no código de erro
+        let shouldReconnect = false;
+        
+        switch (statusCode) {
+          case DisconnectReason.loggedOut:
+            // Deslogado - precisa escanear QR code novamente
+            console.log('🔐 [BAILEYS] Sessão encerrada. Necessário escanear QR code novamente.');
+            reconnectAttempts = 0; // Reset para próxima sessão
+            shouldReconnect = false;
+            break;
+            
+          case DisconnectReason.restartRequired:
+            // Reinício necessário - reconecta automaticamente
+            console.log('🔄 [BAILEYS] Reinício necessário...');
+            shouldReconnect = true;
+            break;
+            
+          case DisconnectReason.connectionLost:
+          case DisconnectReason.connectionClosed:
+          case DisconnectReason.timedOut:
+            // Problemas de conexão - tenta reconectar
+            console.log('📡 [BAILEYS] Problema de conexão, tentando reconectar...');
+            shouldReconnect = true;
+            break;
+            
+          case DisconnectReason.badSession:
+            // Sessão inválida - limpa cache e tenta reconectar
+            console.log('⚠️ [BAILEYS] Sessão inválida, limpando cache antigo...');
+            await cleanAuthCache();
+            shouldReconnect = true;
+            break;
+            
+          default:
+            // Para outros erros, tenta reconectar se não foi logout explícito
+            shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        }
+        
+        // Verificar limite de tentativas
+        if (shouldReconnect && reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          console.log(`❌ [BAILEYS] Máximo de tentativas de reconexão atingido (${MAX_RECONNECT_ATTEMPTS}).`);
+          console.log('💡 [BAILEYS] Tente deletar a pasta baileys_auth e escanear o QR code novamente.');
+          shouldReconnect = false;
+        }
+        
         console.log('🔄 [BAILEYS] Reconectar?', shouldReconnect);
         
         if (shouldReconnect) {
-          console.log('🔄 [BAILEYS] Reconectando em 3 segundos...');
+          reconnectAttempts++;
+          const delay = RECONNECT_INTERVAL_MS * reconnectAttempts; // Backoff exponencial
+          console.log(`🔄 [BAILEYS] Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}. Reconectando em ${delay/1000}s...`);
           setTimeout(() => {
             startBaileys().then(resolve).catch(reject);
-          }, 3000);
+          }, delay);
         } else {
           console.log('🚪 [BAILEYS] Desconectado. Execute novamente para reconectar.');
           reject(new Error(`Desconectado do WhatsApp: ${reason}`));
@@ -296,6 +432,12 @@ export async function startBaileys() {
         console.log('📱 [BAILEYS] Número:', sock.user?.id);
         console.log('📝 [BAILEYS] Nome:', sock.user?.name || 'N/A');
         console.log('✅ [BAILEYS] ========================================\n');
+        
+        // Resetar contador de tentativas após conexão bem-sucedida
+        reconnectAttempts = 0;
+        
+        // Recarregar mapeamentos de LID após conexão
+        await loadLidMappings();
         
         // Limpar cache periodicamente a cada 6 horas
         setInterval(() => {

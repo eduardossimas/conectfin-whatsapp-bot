@@ -2,7 +2,7 @@
  * Serviço de IA - Centraliza todas as chamadas para OpenAI e Gemini
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import OpenAI from "openai";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
@@ -34,32 +34,146 @@ export const PROMPTS = {
   CATEGORY_CLASSIFIER: loadPrompt("system-category-classifier.md"),
   DOCUMENT_ANALYZER: loadPrompt("system-document-analyzer.md"),
   INTENT_CLASSIFIER: loadPrompt("system-intent-classifier.md"),
+  AGENT: loadPrompt("system-agent.md"),
+};
+
+// ========================= SCHEMAS PARA STRUCTURED OUTPUT ========================
+
+/**
+ * Schema para o Parser de lançamentos financeiros
+ */
+export const SCHEMAS = {
+  PARSER: {
+    type: SchemaType.OBJECT,
+    properties: {
+      descricao: { type: SchemaType.STRING, nullable: true },
+      valor: { type: SchemaType.NUMBER, nullable: true },
+      tipo_lancamento: { type: SchemaType.STRING, nullable: true, enum: ["receita", "despesa"] },
+      data_competencia: { type: SchemaType.STRING, nullable: true },
+      data_pagamento: { type: SchemaType.STRING, nullable: true },
+      data_vencimento: { type: SchemaType.STRING, nullable: true },
+      categoria_sugerida: { type: SchemaType.STRING, nullable: true },
+      needs_fix: { type: SchemaType.BOOLEAN },
+      missing: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+      confidence: { type: SchemaType.NUMBER },
+      suggestions: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }
+    },
+    required: ["needs_fix", "missing", "confidence", "suggestions"]
+  },
+  
+  INTENT_CLASSIFIER: {
+    type: SchemaType.OBJECT,
+    properties: {
+      intent: { 
+        type: SchemaType.STRING, 
+        enum: ["greeting", "create_transaction", "view_cashflow", "view_dre", "view_payables", "view_receivables", "unknown"] 
+      },
+      confidence: { type: SchemaType.NUMBER },
+      extracted_info: { type: SchemaType.STRING }
+    },
+    required: ["intent", "confidence", "extracted_info"]
+  },
+  
+  AGENT: {
+    type: SchemaType.OBJECT,
+    properties: {
+      action: { type: SchemaType.STRING, enum: ["call_tool", "respond", "ask_user"] },
+      tool: { type: SchemaType.STRING, nullable: true },
+      parameters_json: { type: SchemaType.STRING, nullable: true, description: "Parâmetros da tool em formato JSON string" },
+      message: { type: SchemaType.STRING, nullable: true },
+      message_to_user: { type: SchemaType.STRING, nullable: true }
+    },
+    required: ["action"]
+  }
+};
+
+/**
+ * Schemas para OpenAI (formato JSON Schema)
+ */
+export const SCHEMAS_OPENAI = {
+  PARSER: {
+    name: "parser_response",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        descricao: { type: ["string", "null"] },
+        valor: { type: ["number", "null"] },
+        tipo_lancamento: { type: ["string", "null"], enum: ["receita", "despesa", null] },
+        data_competencia: { type: ["string", "null"] },
+        data_pagamento: { type: ["string", "null"] },
+        data_vencimento: { type: ["string", "null"] },
+        categoria_sugerida: { type: ["string", "null"] },
+        needs_fix: { type: "boolean" },
+        missing: { type: "array", items: { type: "string" } },
+        confidence: { type: "number" },
+        suggestions: { type: "array", items: { type: "string" } }
+      },
+      required: ["needs_fix", "missing", "confidence", "suggestions", "descricao", "valor", "tipo_lancamento", "data_competencia", "data_pagamento", "data_vencimento", "categoria_sugerida"],
+      additionalProperties: false
+    }
+  },
+  
+  INTENT_CLASSIFIER: {
+    name: "intent_response",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        intent: { type: "string", enum: ["greeting", "create_transaction", "view_cashflow", "view_dre", "view_payables", "view_receivables", "unknown"] },
+        confidence: { type: "number" },
+        extracted_info: { type: "string" }
+      },
+      required: ["intent", "confidence", "extracted_info"],
+      additionalProperties: false
+    }
+  },
+  
+  AGENT: {
+    name: "agent_response",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["call_tool", "respond", "ask_user"] },
+        tool: { type: ["string", "null"] },
+        parameters_json: { type: ["string", "null"], description: "Parâmetros da tool em formato JSON string" },
+        message: { type: ["string", "null"] },
+        message_to_user: { type: ["string", "null"] }
+      },
+      required: ["action", "tool", "parameters_json", "message", "message_to_user"],
+      additionalProperties: false
+    }
+  }
 };
 
 // ========================= LLM CORE ========================
 
 /**
- * Função principal para executar LLM
+ * Função principal para executar LLM com structured output
  * Tenta Gemini primeiro (gratuito), depois OpenAI como fallback
  * 
  * @param {string} system - Prompt do sistema
  * @param {Array} userParts - Array de partes (texto ou inlineData)
+ * @param {Object} options - Opções adicionais
+ * @param {Object} options.schema - Schema Gemini para structured output
+ * @param {Object} options.schemaOpenAI - Schema OpenAI para structured output
  * @param {number} retryCount - Contador de tentativas
- * @returns {Promise<string>} - Resposta da IA (JSON limpo)
+ * @returns {Promise<Object|string>} - Resposta da IA (objeto se schema, string se não)
  */
-export async function runLLM(system, userParts, retryCount = 0) {
-  const maxRetries = 3;
+export async function runLLM(system, userParts, options = {}, retryCount = 0) {
+  const { schema, schemaOpenAI } = options;
   
   // Tentativa 1: Gemini (PRIORIDADE - créditos gratuitos)
   try {
-    return await runLLMGemini(system, userParts, retryCount);
+    return await runLLMGemini(system, userParts, { schema }, retryCount);
   } catch (error) {
     console.error(`❌ [AI] Erro com Gemini:`, error.message);
     
     // Se Gemini falhou e OpenAI está disponível, usa como fallback
     if (openai) {
       console.log(`🔄 [AI] Gemini falhou, tentando OpenAI como fallback...`);
-      return runLLMOpenAI(system, userParts);
+      return runLLMOpenAI(system, userParts, { schema: schemaOpenAI });
     }
     
     // Se não tem OpenAI disponível, relança erro do Gemini
@@ -68,13 +182,16 @@ export async function runLLM(system, userParts, retryCount = 0) {
 }
 
 /**
- * Função específica para OpenAI (fallback quando Gemini falha)
+ * Função específica para OpenAI com structured output
  * 
  * @param {string} system - Prompt do sistema
  * @param {Array} userParts - Array de partes (texto ou inlineData)
- * @returns {Promise<string>} - Resposta da IA (JSON limpo)
+ * @param {Object} options - Opções adicionais
+ * @returns {Promise<Object|string>} - Resposta da IA
  */
-async function runLLMOpenAI(system, userParts) {
+async function runLLMOpenAI(system, userParts, options = {}) {
+  const { schema } = options;
+  
   try {
     console.log(`🤖 [AI] Usando OpenAI (FALLBACK) - Modelo: ${config.OPENAI_MODEL}`);
     
@@ -123,18 +240,43 @@ async function runLLMOpenAI(system, userParts) {
       }
     }
     
-    const response = await openai.chat.completions.create({
+    // Configurar request com ou sem structured output
+    const requestConfig = {
       model: config.OPENAI_MODEL,
       messages: messages,
-      temperature: 0.1, // Mais determinístico para parsing
+      temperature: 0.1,
       max_tokens: 1000
-    });
+    };
+    
+    // Se tem schema, usar structured output
+    if (schema) {
+      requestConfig.response_format = {
+        type: "json_schema",
+        json_schema: schema
+      };
+    }
+    
+    const response = await openai.chat.completions.create(requestConfig);
     
     const txt = response.choices[0].message.content.trim();
     console.log(`✅ [AI] Resposta obtida com sucesso usando OpenAI (${config.OPENAI_MODEL})`);
     console.log(`📊 [AI] Tokens usados: ${response.usage.total_tokens} (prompt: ${response.usage.prompt_tokens}, completion: ${response.usage.completion_tokens})`);
     
-    // remove cercas ```json
+    // Se usou structured output, parsear e retornar objeto
+    if (schema) {
+      try {
+        const parsed = JSON.parse(txt);
+        console.log(`✅ [AI] Structured output parseado com sucesso`);
+        return parsed;
+      } catch (parseError) {
+        console.error(`❌ [AI] Erro ao parsear structured output:`, parseError.message);
+        // Tentar limpar e parsear
+        const cleaned = txt.replace(/```json|```/g, "").trim();
+        return JSON.parse(cleaned);
+      }
+    }
+    
+    // Sem schema, retorna texto limpo
     return txt.replace(/```json|```/g, "").trim();
     
   } catch (error) {
@@ -144,33 +286,60 @@ async function runLLMOpenAI(system, userParts) {
 }
 
 /**
- * Função específica para Gemini (fallback)
+ * Função específica para Gemini com structured output
  * 
  * @param {string} system - Prompt do sistema
  * @param {Array} userParts - Array de partes do Gemini
+ * @param {Object} options - Opções adicionais
  * @param {number} retryCount - Contador de tentativas
- * @returns {Promise<string>} - Resposta da IA (JSON limpo)
+ * @returns {Promise<Object|string>} - Resposta da IA
  */
-async function runLLMGemini(system, userParts, retryCount = 0) {
+async function runLLMGemini(system, userParts, options = {}, retryCount = 0) {
+  const { schema } = options;
   const maxRetries = 2;
   const modelToUse = retryCount === 0 ? config.GEMINI_PRIMARY : config.GEMINI_FALLBACK;
   
   console.log(`🤖 [AI] Tentativa Gemini ${retryCount + 1}/${maxRetries + 1} - Modelo: ${modelToUse}`);
   
   try {
-    const model = genAI.getGenerativeModel({
+    // Configurar modelo com ou sem structured output
+    const modelConfig = {
       model: modelToUse,
       systemInstruction: system,
-    });
+    };
+    
+    // Adicionar configuração de geração com schema se disponível
+    const generationConfig = {};
+    if (schema) {
+      generationConfig.responseMimeType = "application/json";
+      generationConfig.responseSchema = schema;
+    }
+    
+    const model = genAI.getGenerativeModel(modelConfig, generationConfig);
     
     const res = await model.generateContent({
       contents: [{ role: "user", parts: userParts }],
+      generationConfig: schema ? generationConfig : undefined
     });
     
     const txt = res.response.text().trim();
     console.log(`✅ [AI] Resposta obtida com sucesso usando Gemini (${modelToUse})`);
     
-    // remove cercas ```json
+    // Se usou structured output, parsear e retornar objeto
+    if (schema) {
+      try {
+        const parsed = JSON.parse(txt);
+        console.log(`✅ [AI] Structured output parseado com sucesso`);
+        return parsed;
+      } catch (parseError) {
+        console.error(`❌ [AI] Erro ao parsear structured output Gemini:`, parseError.message);
+        // Tentar limpar e parsear
+        const cleaned = txt.replace(/```json|```/g, "").trim();
+        return JSON.parse(cleaned);
+      }
+    }
+    
+    // Sem schema, retorna texto limpo
     return txt.replace(/```json|```/g, "").trim();
     
   } catch (error) {
@@ -180,7 +349,7 @@ async function runLLMGemini(system, userParts, retryCount = 0) {
     if (error.message.includes('503') && retryCount < maxRetries) {
       console.log(`🔄 [AI] Tentando novamente com modelo Gemini fallback...`);
       await sleep(1000);
-      return runLLMGemini(system, userParts, retryCount + 1);
+      return runLLMGemini(system, userParts, options, retryCount + 1);
     }
     
     // Se é erro 503 mas já esgotou tentativas
@@ -205,11 +374,25 @@ export async function classifyIntent(message) {
   try {
     console.log(`🎯 [AI-INTENT] Classificando intenção da mensagem: "${message.substring(0, 50)}..."`);
     
-    const jsonStr = await runLLM(PROMPTS.INTENT_CLASSIFIER, [
-      { text: `Mensagem do usuário: "${message}"` }
-    ]);
+    // Usar structured output
+    const result = await runLLM(
+      PROMPTS.INTENT_CLASSIFIER, 
+      [{ text: `Mensagem do usuário: "${message}"` }],
+      { schema: SCHEMAS.INTENT_CLASSIFIER, schemaOpenAI: SCHEMAS_OPENAI.INTENT_CLASSIFIER }
+    );
     
-    const result = JSON.parse(jsonStr);
+    // Validar campos obrigatórios
+    if (!result.intent) {
+      console.warn(`⚠️ [AI-INTENT] Campo 'intent' não retornado, usando 'unknown'`);
+      result.intent = "unknown";
+    }
+    if (typeof result.confidence !== "number") {
+      result.confidence = 0.5;
+    }
+    if (!result.extracted_info) {
+      result.extracted_info = "";
+    }
+    
     console.log(`✅ [AI-INTENT] Intenção identificada: ${result.intent} (confidence: ${result.confidence})`);
     
     return result;
@@ -301,5 +484,115 @@ categorias_existentes: ${categoriaNames.join(', ')}`;
   } catch (error) {
     console.error("❌ [AI-CATEGORY] Erro na IA para categoria:", error);
     return categoriasExistentes[0]; // fallback
+  }
+}
+
+// ========================= AGENT (NOVO SISTEMA DE TOOLS) ========================
+
+import dayjs from "dayjs";
+import timezone from "dayjs/plugin/timezone.js";
+import utc from "dayjs/plugin/utc.js";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+/**
+ * Executa o agente inteligente com sistema de tools
+ * O agente decide o que fazer baseado no contexto e pode chamar tools
+ * 
+ * @param {string} userMessage - Mensagem do usuário
+ * @param {Array} mediaParts - Partes de mídia (imagens, áudios, etc) - opcional
+ * @param {Object} context - Contexto adicional (histórico, user info, etc)
+ * @returns {Promise<{ action: string, tool?: string, parameters?: Object, message?: string }>}
+ */
+export async function runAgent(userMessage, mediaParts = [], context = {}) {
+  const today = dayjs.tz(dayjs(), "America/Sao_Paulo");
+  const dataHoje = today.format("YYYY-MM-DD");
+  const dataOntem = today.subtract(1, "day").format("YYYY-MM-DD");
+  
+  // Preparar prompt do sistema com datas substituídas
+  let systemPrompt = PROMPTS.AGENT
+    .replace(/\{\{DATA_HOJE\}\}/g, dataHoje)
+    .replace(/\{\{DATA_ONTEM\}\}/g, dataOntem);
+  
+  // Adicionar contexto do usuário se disponível
+  if (context.userName) {
+    systemPrompt += `\n\n## Contexto do Usuário\n- Nome: ${context.userName}`;
+  }
+  
+  // Adicionar histórico de conversa se disponível
+  if (context.conversationHistory && context.conversationHistory.trim()) {
+    systemPrompt += `\n\n## 💬 Histórico da Conversa (mensagens anteriores)\n\`\`\`\n${context.conversationHistory}\n\`\`\`\n\n**IMPORTANTE:** Use este histórico para entender o contexto. Se o usuário responder apenas com um valor ou confirmação, relacione com a pergunta anterior.`;
+  }
+  
+  console.log(`🤖 [AGENT] Processando mensagem: "${userMessage.substring(0, 50)}..."`);
+  if (context.conversationHistory) {
+    console.log(`💬 [AGENT] Com histórico de ${context.conversationHistory.split('\n').length} linhas`);
+  }
+  
+  // Montar parts para o LLM
+  const parts = [];
+  
+  // Adicionar mídia primeiro (se houver)
+  if (mediaParts && mediaParts.length > 0) {
+    for (const media of mediaParts) {
+      if (media.inlineData) {
+        parts.push(media);
+      }
+    }
+    console.log(`📎 [AGENT] ${mediaParts.length} mídia(s) anexada(s)`);
+  }
+  
+  // Adicionar mensagem do usuário
+  parts.push({ text: `Mensagem atual do usuário: "${userMessage}"` });
+  
+  try {
+    // Usar structured output para garantir formato correto
+    const parsed = await runLLM(
+      systemPrompt, 
+      parts,
+      { schema: SCHEMAS.AGENT, schemaOpenAI: SCHEMAS_OPENAI.AGENT }
+    );
+    
+    console.log(`📤 [AGENT] Resposta estruturada:`, JSON.stringify(parsed).substring(0, 200));
+    
+    // Validar campos obrigatórios
+    if (!parsed.action) {
+      console.warn(`⚠️ [AGENT] Campo 'action' não retornado, usando 'respond'`);
+      parsed.action = "respond";
+      parsed.message = parsed.message || "Desculpe, não entendi. Pode reformular sua pergunta?";
+    }
+    
+    // Normalizar message_to_user para message se necessário
+    if (!parsed.message && parsed.message_to_user) {
+      parsed.message = parsed.message_to_user;
+    }
+    
+    // Parsear parameters_json para objeto parameters
+    if (parsed.parameters_json) {
+      try {
+        parsed.parameters = JSON.parse(parsed.parameters_json);
+      } catch (e) {
+        console.warn(`⚠️ [AGENT] Não foi possível parsear parameters_json:`, parsed.parameters_json);
+        parsed.parameters = {};
+      }
+    } else {
+      parsed.parameters = {};
+    }
+    
+    console.log(`✅ [AGENT] Ação decidida: ${parsed.action}`);
+    
+    if (parsed.action === "call_tool") {
+      console.log(`🔧 [AGENT] Tool: ${parsed.tool}, Params:`, parsed.parameters);
+    }
+    
+    return parsed;
+    
+  } catch (error) {
+    console.error(`❌ [AGENT] Erro ao executar agente:`, error.message);
+    return {
+      action: "respond",
+      message: "Desculpe, estou tendo dificuldades no momento. Tente novamente em alguns segundos. 🙏"
+    };
   }
 }

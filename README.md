@@ -21,10 +21,13 @@ Assistente financeiro inteligente via WhatsApp para o sistema ConectFin.
 Bot de WhatsApp que permite gerenciar finanças pelo celular usando **IA para entender mensagens naturais**. Suporta texto, áudio, imagens e PDFs.
 
 ### Tecnologias:
-- **Baileys** - Conexão com WhatsApp Web
-- **OpenAI/Gemini** - Inteligência Artificial
+- **Baileys** - Conexão com WhatsApp Web (desenvolvimento)
+- **WABA** - WhatsApp Business API (produção)
+- **Google Gemini 2.0 Flash Lite** - Inteligência Artificial (primário)
+- **OpenAI GPT-4o-mini** - IA (fallback)
 - **API REST** - Integração com ConectFin
-- **Node.js** - Backend
+- **Node.js** - Backend com ES Modules
+- **Canvas** - Geração de gráficos
 
 ---
 
@@ -32,38 +35,83 @@ Bot de WhatsApp que permite gerenciar finanças pelo celular usando **IA para en
 
 ### ✅ Implementadas:
 
-- 💬 **Saudações e ajuda** - Responde "oi", "ajuda"
-- 💰 **Criar lançamentos** - Via texto, áudio, imagem ou PDF
-- 💸 **Contas a pagar** - Lista despesas pendentes
-- 💵 **Contas a receber** - Lista receitas pendentes
-- 🤖 **Classificação inteligente** - IA identifica intenção automaticamente
-- 📂 **Categorização automática** - IA escolhe melhor categoria
+#### 💬 Conversação Inteligente
+- **Memória de conversa** - Bot lembra contexto das últimas mensagens (10 mensagens, 30min)
+- **Linguagem natural** - Entende mensagens informais e coloquiais
+- **Respostas humanizadas** - Tom amigável e empático
+
+#### 💰 Gestão de Lançamentos
+- **Criar receitas** - "Recebi 1000 do cliente X"
+- **Criar despesas** - "Paguei 50 de mercado ontem"
+- **Via áudio** - Envie mensagem de voz descrevendo
+- **Via imagem** - Envie foto de nota fiscal/recibo
+- **Via PDF** - Envie boleto ou fatura
+- **Categorização automática** - IA escolhe melhor categoria
+
+#### 💸 Contas a Pagar
+- **Listar despesas pendentes** - "O que tenho a pagar?"
+- **Exibe valor e vencimento** - Mostra lista formatada
+- **Total consolidado** - Soma todas as contas
+
+#### 💵 Contas a Receber
+- **Listar receitas pendentes** - "O que vou receber?"
+- **Exibe valor e vencimento** - Mostra lista formatada
+- **Total consolidado** - Soma todas as contas
+
+#### 📊 Fluxo de Caixa
+- **Gráfico visual** - Imagem PNG com barras de receitas/despesas
+- **Linha de saldo** - Mostra evolução do saldo
+- **Período flexível** - "Fluxo de caixa de janeiro"
+- **Análise automática** - IA analisa e dá insights
+
+#### 📋 Listagem de Transações
+- **Por período** - "Transações de dezembro"
+- **Por tipo** - "Minhas despesas do mês"
+- **Detalhamento** - Descrição, valor, data, status
 
 ### 🚧 Em desenvolvimento:
 
-- 📊 **Fluxo de Caixa** - Gráfico com imagem
-- 📈 **DRE** - Gráfico com imagem
+- 📈 **DRE** - Demonstrativo de Resultado do Exercício
+- 📉 **Relatórios avançados** - Análises por categoria
 
 ---
 
 ## 🏗️ Arquitetura
 
+### Nova Arquitetura: Agent-Based com Tools
+
+O bot utiliza um sistema de **Agente com Tools** onde a IA decide qual ferramenta usar baseado na conversa.
+
 ```
 conectfin-bot/
 ├── config/              → Configurações (API keys, URLs)
-├── services/            → Serviços (IA, WhatsApp, Database)
+├── services/            → Serviços (IA, WhatsApp, Database, Memória)
 ├── handlers/            → Processadores de mensagens
 ├── analyzers/           → Analisadores (texto/mídia)
+├── tools/               → Definições e Executores de Tools
 ├── utils/               → Funções auxiliares
-├── prompts/             → Prompts de IA (não mexer!)
+├── prompts/             → Prompts de IA
 ├── baileys_auth/        → Credenciais WhatsApp (auto-gerado)
 └── index.js             → Arquivo principal
 ```
 
-**Fluxo de mensagens:**
+**Fluxo de mensagens (Agent-Based):**
 ```
-WhatsApp → message-router → classificar intenção → handler específico → resposta
+WhatsApp → agent-router → runAgent (IA) → decide ação → executar tool → resposta
+                ↓
+         conversation-memory (contexto)
 ```
+
+### Tools Disponíveis:
+
+| Tool | Descrição |
+|------|-----------|
+| `create_transaction` | Cria lançamento (receita/despesa) |
+| `get_payables` | Lista contas a pagar |
+| `get_receivables` | Lista contas a receber |
+| `get_cashflow` | Gera fluxo de caixa com gráfico |
+| `analyze_cashflow` | Analisa situação financeira |
+| `list_transactions` | Lista transações por período |
 
 ---
 
@@ -158,33 +206,61 @@ npm run dev
 
 ## 💬 Comandos do Bot
 
+O bot entende linguagem natural! Não precisa de comandos específicos.
+
 ### Saudação:
 ```
-Usuário: oi
-Bot: [Menu de ajuda com opções]
+Usuário: oi / olá / bom dia
+Bot: Olá! 👋 Como posso ajudar com suas finanças hoje?
 ```
 
-### Criar lançamento:
+### Criar lançamentos:
 ```
+# Despesas
 Usuário: paguei 50 reais de mercado
-Bot: ✅ Lançamento criado! ...
+Usuário: gastei 120 no uber ontem
+Usuário: comprei material de escritório por 89,90
 
-Usuário: recebi 1000 do cliente X ontem
-Bot: ✅ Lançamento criado! ...
+# Receitas
+Usuário: recebi 1000 do cliente X
+Usuário: entrou 5000 de salário hoje
+Usuário: vou receber 500 amanhã
 
-Ou envie:
-- 🎵 Áudio descrevendo a despesa
-- 🖼️ Foto de nota fiscal
-- 📄 PDF de boleto/fatura
+# Mídia
+🎵 Envie áudio descrevendo o gasto
+🖼️ Envie foto de nota fiscal
+📄 Envie PDF de boleto/fatura
 ```
 
-### Ver contas:
+### Contas a pagar/receber:
 ```
-Usuário: contas a pagar
-Bot: 💸 Contas a Pagar (3) ...
-
+Usuário: o que tenho a pagar?
+Usuário: minhas contas a pagar
+Usuário: o que vou receber?
 Usuário: contas a receber
-Bot: 💰 Contas a Receber (2) ...
+```
+
+### Fluxo de caixa:
+```
+Usuário: fluxo de caixa
+Usuário: fluxo de caixa de janeiro
+Usuário: como está meu caixa?
+Bot: [Envia imagem do gráfico + análise]
+```
+
+### Listar transações:
+```
+Usuário: minhas transações de dezembro
+Usuário: despesas do mês passado
+Usuário: o que lancei essa semana?
+```
+
+### Conversa contextual:
+```
+Usuário: paguei 50 de luz
+Bot: É receita ou despesa?
+Usuário: despesa
+Bot: ✅ Lançamento criado! Despesa de R$ 50,00...
 ```
 
 ---
@@ -194,50 +270,62 @@ Bot: 💰 Contas a Receber (2) ...
 ### Arquivos Principais:
 
 ```
-index.js                     → Servidor Express + Inicialização
-baileys-client.js           → Cliente WhatsApp (Baileys)
-config/environment.js       → Configurações centralizadas
+index.js                     → Servidor Express + Inicialização (WABA)
+index-unified.js             → Entrada principal (detecta ambiente)
+baileys-client.js            → Cliente WhatsApp (Baileys - desenvolvimento)
+config/environment.js        → Configurações centralizadas
 ```
 
 ### Services (Serviços):
 
 ```
 services/
-├── ai-service.js           → Chamadas IA (OpenAI/Gemini)
-├── whatsapp-service.js     → Envio de mensagens
-├── api-client.js           → Cliente HTTP para API ConectFin
-└── database-service.js     → Camada de abstração para dados
+├── ai-service.js            → Chamadas IA (Gemini/OpenAI) + runAgent()
+├── whatsapp-service-unified.js → Envio de mensagens (detecta cliente)
+├── api-client.js            → Cliente HTTP para API ConectFin
+├── database-service.js      → Camada de abstração para dados
+├── conversation-memory.js   → Memória de contexto por usuário
+└── chart-service-svg.js     → Geração de gráficos com Canvas
 ```
 
 ### Handlers (Processadores):
 
 ```
 handlers/
-├── message-router.js       → 🧠 Roteador principal
-├── greeting-handler.js     → Saudações
-├── transaction-handler.js  → Criar lançamentos
-└── reports-handler.js      → Contas a pagar/receber
+├── agent-router.js          → 🧠 Roteador principal (Agent-Based)
+├── message-router.js        → Roteador legado (intent-based)
+├── greeting-handler.js      → Saudações
+├── transaction-handler.js   → Criar lançamentos (legado)
+└── reports-handler.js       → Relatórios (legado)
+```
+
+### Tools (Ferramentas do Agente):
+
+```
+tools/
+├── index.js                 → Ponto de entrada das tools
+├── definitions.js           → Schemas e validação das tools
+└── executors.js             → Implementação das tools
 ```
 
 ### Analyzers (Analisadores):
 
 ```
 analyzers/
-├── text-analyzer.js        → Texto livre
-└── media-analyzer.js       → Áudio, imagem, PDF
+├── text-analyzer.js         → Texto livre
+└── media-analyzer.js        → Áudio, imagem, PDF
 ```
 
 ### Prompts (IA):
 
 ```
 prompts/
+├── system-agent.md                 → 🆕 Prompt do Agente (principal)
 ├── system-parser.md                → Extração de dados
 ├── system-category-classifier.md   → Classificação de categorias
 ├── system-document-analyzer.md     → Análise de documentos
-└── system-intent-classifier.md     → Classificação de intenção
+└── system-intent-classifier.md     → Classificação de intenção (legado)
 ```
-
-**⚠️ NÃO ALTERE OS PROMPTS sem entender o impacto!**
 
 ---
 
@@ -359,13 +447,36 @@ GET http://localhost:3000/user-check/+5532991473412
 
 ## 🎨 Personalizando
 
-### Adicionar nova funcionalidade:
+### Adicionar nova Tool:
 
-1. **Adicione intenção** em `prompts/system-intent-classifier.md`
-2. **Crie handler** em `handlers/sua-funcionalidade-handler.js`
-3. **Adicione rota** em `handlers/message-router.js`
+1. **Defina a tool** em `tools/definitions.js`:
+```javascript
+tool_name: {
+  name: 'tool_name',
+  description: 'O que a tool faz',
+  requiredParams: ['param1'],
+  optionalParams: ['param2']
+}
+```
 
-Exemplo completo no arquivo `REFACTORING-COMPLETED.md` (se existir).
+2. **Implemente o executor** em `tools/executors.js`:
+```javascript
+async function executeToolName(params, context) {
+  // Implementação
+  return { success: true, data: {}, message: "Resposta" };
+}
+```
+
+3. **Registre no switch** em `tools/index.js`
+
+4. **Atualize o prompt** em `prompts/system-agent.md`
+
+### Ajustar comportamento do Agente:
+
+Edite `prompts/system-agent.md` para:
+- Mudar tom de voz
+- Adicionar regras de negócio
+- Definir quando usar cada tool
 
 ---
 
