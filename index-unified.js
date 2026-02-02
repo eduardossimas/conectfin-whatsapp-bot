@@ -14,7 +14,12 @@ import express from "express";
 import morgan from "morgan";
 import { config } from './config/environment.js';
 import wabaConfig from './config/waba-config.js';
-import { handleWhatsAppMessage } from './handlers/message-router.js';
+
+// ============ SISTEMA DE ROTEAMENTO ============
+// Usar novo sistema de agente com tools (feature/agent-tools-system)
+// Para voltar ao sistema antigo, troque para: './handlers/message-router.js'
+import { handleWhatsAppMessage } from './handlers/agent-router.js';
+
 import { 
   getAllUserCategorias, 
   getUserByPhone 

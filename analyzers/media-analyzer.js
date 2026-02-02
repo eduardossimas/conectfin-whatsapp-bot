@@ -7,7 +7,7 @@ import timezone from "dayjs/plugin/timezone.js";
 import utc from "dayjs/plugin/utc.js";
 import { createRequire } from "module";
 import axios from "axios";
-import { runLLM, PROMPTS, analyzeDocumentContent } from "../services/ai-service.js";
+import { runLLM, PROMPTS, SCHEMAS, SCHEMAS_OPENAI, analyzeDocumentContent } from "../services/ai-service.js";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -31,12 +31,19 @@ export async function analyzeInlineAudio({ buffer, mime }) {
   const today = dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
   const base64 = buffer.toString("base64");
   
-  const jsonStr = await runLLM(PROMPTS.PARSER, [
-    { inlineData: { data: base64, mimeType: mime || "audio/ogg" } },
-    { text: `NOW_ISO="${today}"\nExtraia os campos do áudio acima.` },
-  ]);
+  // Usar structured output
+  const result = await runLLM(
+    PROMPTS.PARSER, 
+    [
+      { inlineData: { data: base64, mimeType: mime || "audio/ogg" } },
+      { text: `NOW_ISO="${today}"\nExtraia os campos do áudio acima.` },
+    ],
+    { schema: SCHEMAS.PARSER, schemaOpenAI: SCHEMAS_OPENAI.PARSER }
+  );
   
-  const result = JSON.parse(jsonStr);
+  // Validar campos obrigatórios
+  validateParserResult(result);
+  
   console.log(`✅ [AUDIO-ANALYZER] Análise concluída`);
   
   return result;
@@ -58,16 +65,23 @@ export async function analyzeInlineImage({ buffer, mime, caption = "" }) {
   const today = dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
   const base64 = buffer.toString("base64");
   
-  const jsonStr = await runLLM(PROMPTS.PARSER, [
-    { inlineData: { data: base64, mimeType: mime || "image/jpeg" } },
-    {
-      text: `NOW_ISO="${today}"\nLegenda: ${
-        caption || "(sem)"
-      }\nA imagem pode ser nota fiscal, comprovante, fatura ou foto de quadro. Extraia os campos.`,
-    },
-  ]);
+  // Usar structured output
+  const result = await runLLM(
+    PROMPTS.PARSER, 
+    [
+      { inlineData: { data: base64, mimeType: mime || "image/jpeg" } },
+      {
+        text: `NOW_ISO="${today}"\nLegenda: ${
+          caption || "(sem)"
+        }\nA imagem pode ser nota fiscal, comprovante, fatura ou foto de quadro. Extraia os campos.`,
+      },
+    ],
+    { schema: SCHEMAS.PARSER, schemaOpenAI: SCHEMAS_OPENAI.PARSER }
+  );
   
-  const result = JSON.parse(jsonStr);
+  // Validar campos obrigatórios
+  validateParserResult(result);
+  
   console.log(`✅ [IMAGE-ANALYZER] Análise concluída`);
   
   return result;
@@ -132,7 +146,7 @@ export async function analyzeInlinePdf({ buffer }) {
     // Step 2: Analyze document
     const documentAnalysis = await analyzeDocumentContent(text);
     
-    // Step 3: Extract structured data
+    // Step 3: Extract structured data using structured output
     console.log(`🔧 [PDF-ANALYZER] Extraindo dados estruturados...`);
     
     const extractionPrompt = `NOW_ISO="${today}"
@@ -143,13 +157,17 @@ ${documentAnalysis}
 TEXTO ORIGINAL:
 ${text.substring(0, 2000)}
 
-Com base na análise acima, extraia os dados financeiros e retorne APENAS o JSON no formato especificado.`;
+Com base na análise acima, extraia os dados financeiros.`;
 
-    const jsonStr = await runLLM(PROMPTS.PARSER, [
-      { text: extractionPrompt },
-    ]);
+    const result = await runLLM(
+      PROMPTS.PARSER, 
+      [{ text: extractionPrompt }],
+      { schema: SCHEMAS.PARSER, schemaOpenAI: SCHEMAS_OPENAI.PARSER }
+    );
     
-    const result = JSON.parse(jsonStr);
+    // Validar campos obrigatórios
+    validateParserResult(result);
+    
     console.log(`✅ [PDF-ANALYZER] Análise completa concluída`);
     
     return result;
@@ -171,5 +189,23 @@ Com base na análise acima, extraia os dados financeiros e retorne APENAS o JSON
       confidence: 0.0,
       suggestions: ["Não foi possível processar o documento automaticamente. Por favor, digite as informações manualmente: 'Paguei R$ [valor] de [descrição] em [data]'"]
     };
+  }
+}
+
+/**
+ * Valida e normaliza resultado do parser
+ */
+function validateParserResult(result) {
+  if (typeof result.needs_fix !== "boolean") {
+    result.needs_fix = true;
+  }
+  if (!Array.isArray(result.missing)) {
+    result.missing = [];
+  }
+  if (typeof result.confidence !== "number") {
+    result.confidence = 0.5;
+  }
+  if (!Array.isArray(result.suggestions)) {
+    result.suggestions = [];
   }
 }
