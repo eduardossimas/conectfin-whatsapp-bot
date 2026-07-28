@@ -1,13 +1,15 @@
 import makeWASocket, { 
   DisconnectReason, 
   useMultiFileAuthState,
-  downloadMediaMessage
+  downloadMediaMessage,
+  fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { readdir, unlink, stat, readFile } from 'fs/promises';
 import { join } from 'path';
+import { isAllowedWhatsAppPhone } from './config/environment.js';
 
 // ======================= CONFIGURAÇÃO =======================
 let sock = null;
@@ -320,11 +322,23 @@ export async function startBaileys() {
     
     // Carregar mapeamentos de LID
     await loadLidMappings();
+
+    // Buscar versão mais recente do WhatsApp Web para evitar erros de protocolo (ex.: 405)
+    let latestVersion;
+    try {
+      const { version, isLatest } = await fetchLatestBaileysVersion();
+      latestVersion = version;
+      console.log(`🔢 [BAILEYS] Versão WA Web: ${version.join('.')} (latest: ${isLatest})`);
+    } catch (versionError) {
+      console.warn(`⚠️ [BAILEYS] Não foi possível buscar versão mais recente: ${versionError.message}`);
+      console.warn('⚠️ [BAILEYS] Continuando com versão padrão da biblioteca');
+    }
     
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
     
     sock = makeWASocket({
       auth: state,
+      ...(latestVersion ? { version: latestVersion } : {}),
       // Removido printQRInTerminal pois está depreciado
       logger: pino({ level: 'silent' }), // Desativa logs do Baileys
       browser: ['ConectFin Bot', 'Chrome', '120.0.0'], // Identifica o bot
@@ -365,6 +379,13 @@ export async function startBaileys() {
         const reason = DisconnectReason[statusCode] || 'desconhecido';
         
         console.log(`❌ [BAILEYS] Conexão fechada. Motivo: ${reason} (${statusCode})`);
+        if (statusCode === 405) {
+          console.log('💡 [BAILEYS] Código 405 geralmente indica incompatibilidade temporária de protocolo/versão do WhatsApp Web.');
+          console.log('💡 [BAILEYS] Tentando reconectar com versão atualizada automaticamente...');
+        }
+        if (lastDisconnect?.error) {
+          console.log('🧾 [BAILEYS] Detalhes do erro:', lastDisconnect.error.message || String(lastDisconnect.error));
+        }
         
         // Determinar se deve reconectar baseado no código de erro
         let shouldReconnect = false;
@@ -460,6 +481,13 @@ export async function startBaileys() {
         
         // Ignora mensagens de status (stories)
         if (message.key.remoteJid === 'status@broadcast') continue;
+
+        // Ignora qualquer remetente fora da whitelist
+        const from = formatWhatsAppToE164(message.key.remoteJid);
+        if (!isAllowedWhatsAppPhone(from)) {
+          console.log(`🚫 [BAILEYS] Mensagem ignorada de número não autorizado: ${from}`);
+          continue;
+        }
         
         console.log('\n📨 [BAILEYS] Nova mensagem recebida!');
         console.log('📱 [BAILEYS] De:', message.key.remoteJid);
@@ -492,6 +520,10 @@ export async function sendText(to, text) {
   if (!sock) {
     throw new Error('WhatsApp não conectado. Execute startBaileys() primeiro.');
   }
+
+  if (!isAllowedWhatsAppPhone(to)) {
+    throw new Error(`Destino não autorizado para envio: ${to}`);
+  }
   
   const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);
   
@@ -512,6 +544,10 @@ export async function sendText(to, text) {
 export async function sendImage(to, imageBuffer, caption = '') {
   if (!sock) {
     throw new Error('WhatsApp não conectado. Execute startBaileys() primeiro.');
+  }
+
+  if (!isAllowedWhatsAppPhone(to)) {
+    throw new Error(`Destino não autorizado para envio: ${to}`);
   }
   
   const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);

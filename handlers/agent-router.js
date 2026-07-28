@@ -10,7 +10,7 @@ import { getUserByPhone } from "../services/database-service.js";
 import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service-unified.js";
 import { executeTool } from "../tools/index.js";
 import { sleep } from "../utils/helpers.js";
-import { config } from "../config/environment.js";
+import { config, isAllowedWhatsAppPhone } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
 import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
 
@@ -39,6 +39,11 @@ export async function handleWhatsAppMessageAgent(message) {
     const { type, text, caption, media } = parsed;
     
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
+
+    if (!isAllowedWhatsAppPhone(from)) {
+      console.log(`🚫 [AGENT-ROUTER] Número não autorizado, ignorando: ${from}`);
+      return;
+    }
     
     // ============ 2. BUSCAR USUÁRIO NA API ============
     console.log(`🔍 [AGENT-ROUTER] Buscando usuário na API: ${from}`);
@@ -121,7 +126,7 @@ export async function handleWhatsAppMessageAgent(message) {
     console.error("💥 [AGENT-ROUTER] Stack:", err.stack);
     
     try {
-      if (from) {
+      if (from && isAllowedWhatsAppPhone(from)) {
         await sleep(250);
         const errorMessage = formatErrorMessage(err);
         await sendWhatsAppText(from, errorMessage);

@@ -8,7 +8,7 @@
  * Detecta automaticamente qual cliente usar baseado em WHATSAPP_MODE
  */
 
-import { config } from "../config/environment.js";
+import { config, isAllowedWhatsAppPhone } from "../config/environment.js";
 import { saveMedia } from './media-storage-service.js';
 
 // Detecta modo
@@ -33,6 +33,10 @@ if (WHATSAPP_MODE === 'waba') {
  * @param {string} text - Texto da mensagem
  */
 export async function sendWhatsAppText(to, text) {
+  if (!isAllowedWhatsAppPhone(to)) {
+    throw new Error(`Destino não autorizado para envio: ${to}`);
+  }
+
   try {
     console.log(`📤 [SEND] Enviando via ${WHATSAPP_MODE.toUpperCase()} para ${to}`);
     console.log(`📝 [SEND] Mensagem: ${text.substring(0, 100)}...`);
@@ -66,6 +70,10 @@ export async function sendWhatsAppText(to, text) {
  * @param {string} caption - Legenda opcional
  */
 export async function sendWhatsAppImage(to, imageBuffer, caption = "") {
+  if (!isAllowedWhatsAppPhone(to)) {
+    throw new Error(`Destino não autorizado para envio: ${to}`);
+  }
+
   try {
     console.log(`📤 [SEND] Enviando imagem via ${WHATSAPP_MODE.toUpperCase()} para ${to}`);
     console.log(`📸 [SEND] Tamanho: ${imageBuffer.length} bytes`);

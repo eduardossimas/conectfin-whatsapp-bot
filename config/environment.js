@@ -1,5 +1,51 @@
 import "dotenv/config";
 
+function normalizeWhatsAppPhone(raw = "") {
+  const digits = String(raw)
+    .trim()
+    .replace(/^whatsapp:/i, "")
+    .replace(/@s\.whatsapp\.net$/, "")
+    .replace(/@c\.us$/, "")
+    .replace(/@lid$/, "")
+    .replace(/\D/g, "");
+
+  return digits ? `+${digits}` : "";
+}
+
+function getPhoneVariants(phone = "") {
+  const normalized = normalizeWhatsAppPhone(phone);
+  if (!normalized) return [];
+
+  const digits = normalized.replace(/^\+/, "");
+  const variants = new Set([normalized]);
+
+  // Brasil: aceita equivalência entre formatos com e sem nono dígito.
+  // Exemplo: +5532991473412 <-> +553291473412
+  if (digits.startsWith("55")) {
+    if (digits.length === 13) {
+      const withouNinthDigit = `${digits.slice(0, 4)}${digits.slice(5)}`;
+      variants.add(`+${withouNinthDigit}`);
+    }
+
+    if (digits.length === 12) {
+      const withNinthDigit = `${digits.slice(0, 4)}9${digits.slice(4)}`;
+      variants.add(`+${withNinthDigit}`);
+    }
+  }
+
+  return Array.from(variants);
+}
+
+const envAllowedWhatsApp = process.env.ALLOWED_WHATSAPP || "+5532991473412";
+const normalizedAllowedWhatsAppList = envAllowedWhatsApp
+  .split(",")
+  .map((phone) => normalizeWhatsAppPhone(phone))
+  .filter(Boolean);
+
+const allowedWhatsAppList = normalizedAllowedWhatsAppList.length
+  ? normalizedAllowedWhatsAppList
+  : ["+5532991473412"];
+
 export const config = {
   // Server
   PORT: Number(process.env.PORT || 3001),
@@ -8,7 +54,8 @@ export const config = {
   WHATSAPP_MODE: process.env.WHATSAPP_MODE || 'baileys', // 'baileys' ou 'waba'
   
   // WhatsApp (legacy)
-  ALLOWED_WHATSAPP: "+553291473412",
+  ALLOWED_WHATSAPP: allowedWhatsAppList[0],
+  ALLOWED_WHATSAPP_LIST: allowedWhatsAppList,
   WAHA_URL: process.env.WAHA_URL,
   WA_CLOUD_PHONE_ID: process.env.WA_CLOUD_PHONE_ID,
   WA_CLOUD_TOKEN: process.env.WA_CLOUD_TOKEN,
@@ -49,3 +96,10 @@ export const config = {
   GEMINI_PRIMARY: "gemini-2.0-flash-lite",
   GEMINI_FALLBACK: "gemini-1.5-flash",
 };
+
+export { normalizeWhatsAppPhone };
+
+export function isAllowedWhatsAppPhone(phone) {
+  const candidates = getPhoneVariants(phone);
+  return candidates.some((candidate) => config.ALLOWED_WHATSAPP_LIST.includes(candidate));
+}

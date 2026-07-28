@@ -6,7 +6,7 @@ import { classifyIntent } from "../services/ai-service.js";
 import { getUserByPhone } from "../services/database-service.js";
 import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service-unified.js";
 import { sleep, normalizePhoneE164 } from "../utils/helpers.js";
-import { config } from "../config/environment.js";
+import { config, isAllowedWhatsAppPhone } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
 
 // Handlers
@@ -39,6 +39,11 @@ export async function handleWhatsAppMessage(message) {
     const { from, type, text, caption } = parsed;
     
     console.log(`📱 [ROUTER] De: ${from}, Tipo: ${type}`);
+
+    if (!isAllowedWhatsAppPhone(from)) {
+      console.log(`🚫 [ROUTER] Número não autorizado, ignorando: ${from}`);
+      return;
+    }
     
     // ============ 2. BUSCAR USUÁRIO NA API ============
     console.log(`🔍 [ROUTER] Buscando usuário na API: ${from}`);
@@ -140,7 +145,7 @@ export async function handleWhatsAppMessage(message) {
         }
       }
       
-      if (from) {
+      if (from && isAllowedWhatsAppPhone(from)) {
         await sleep(250);
         const errorMessage = formatErrorMessage(err);
         
