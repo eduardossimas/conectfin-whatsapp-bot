@@ -10,7 +10,7 @@ import { getUserByPhone } from "../services/database-service.js";
 import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service-unified.js";
 import { executeTool } from "../tools/index.js";
 import { sleep } from "../utils/helpers.js";
-import { config, isAllowedWhatsAppPhone } from "../config/environment.js";
+import { config, isAllowedWhatsAppPhone, getPhoneVariants } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
 import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
 
@@ -40,14 +40,42 @@ export async function handleWhatsAppMessageAgent(message) {
     
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
 
-    if (!isAllowedWhatsAppPhone(from)) {
-      console.log(`🚫 [AGENT-ROUTER] Número não autorizado, ignorando: ${from}`);
-      return;
-    }
+
     
     // ============ 2. BUSCAR USUÁRIO NA API ============
     console.log(`🔍 [AGENT-ROUTER] Buscando usuário na API: ${from}`);
-    const user = await getUserByPhone(from);
+    const phoneVariants = getPhoneVariants(from);
+    let user = null;
+    for(const variant of phoneVariants) {
+      user = await getUserByPhone(variant);
+      if(user) {
+        console.log(`✅ [AGENT-ROUTER] Usuário encontrado via banco de dados: ${variant}`);
+        from = variant; // Atualiza o "from" para o número autorizado
+        break;
+      }
+    }
+
+    if(!user) {
+      console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Ignorando mensagem.`);
+      return;
+    }
+    if(from.startsWith('lid:')) {
+      console.log(`⚠️ [AGENT-ROUTER] LID não resolvido, solicitando identificação do usuário: ${from}`);
+      const lid = from.replace('lid:', '');
+      const lidJid = `${lid}@lid`;
+
+    await sendWhatsAppText(lidJid,
+    "Olá! 👋\n\nPara usar o ConectFin, preciso primeiro identificar sua conta.\n\n📧 Por favor, informe o **email** que você cadastrou no ConectFin."
+    );
+
+      // Guarda na memória que este LID está aguardando identificação
+    addMessage(from, 'user',
+    `[SISTEMA] LID não resolvido: ${lid}. Solicitação de email enviada para ${lidJid}`
+    );
+    return;
+  }
+
+    user = await getUserByPhone(from);
     
     if (!user) {
       console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Ignorando mensagem.`);
@@ -100,6 +128,7 @@ export async function handleWhatsAppMessageAgent(message) {
     const context = {
       user,
       from,
+      originalJid: parsed.originalJid,
       userName: null, // TODO: Implementar busca de nome do usuário no futuro
       messageType: type,
       conversationHistory // Histórico da conversa
@@ -126,10 +155,11 @@ export async function handleWhatsAppMessageAgent(message) {
     console.error("💥 [AGENT-ROUTER] Stack:", err.stack);
     
     try {
-      if (from && isAllowedWhatsAppPhone(from)) {
+      const errorsendTo = originalJid || from;
+      if (errorsendTo) {
         await sleep(250);
         const errorMessage = formatErrorMessage(err);
-        await sendWhatsAppText(from, errorMessage);
+        await sendWhatsAppText(errorsendTo, errorMessage);
       }
     } catch (sendErr) {
       console.error("💥 [AGENT-ROUTER] Erro ao enviar mensagem de erro:", sendErr.message);
@@ -149,7 +179,8 @@ const VALID_TOOLS = ['create_transaction', 'get_payables', 'get_receivables', 'g
  * @returns {Promise<string|null>} - Mensagem enviada ao usuário
  */
 async function processAgentResponse(agentResponse, context) {
-  const { from, user } = context;
+  const { from, user, originalJid } = context;
+  const sendTo = originalJid || from; // Prioriza o JID original se disponível
   let { action, tool, parameters, message, message_to_user } = agentResponse;
   
   let sentMessage = null;
@@ -168,7 +199,7 @@ async function processAgentResponse(agentResponse, context) {
     case "ask_user":
       // Resposta direta ao usuário (sem chamar tool)
       if (message) {
-        await sendWhatsAppText(from, message);
+        await sendWhatsAppText(sendTo, message);
         sentMessage = message;
       }
       break;
@@ -176,7 +207,7 @@ async function processAgentResponse(agentResponse, context) {
     case "call_tool":
       // Se há mensagem prévia, envia primeiro
       if (message_to_user) {
-        await sendWhatsAppText(from, message_to_user);
+        await sendWhatsAppText(sendTo, message_to_user);
         await sleep(500);
       }
       
@@ -193,7 +224,7 @@ async function processAgentResponse(agentResponse, context) {
     default:
       console.warn(`⚠️ [AGENT-ROUTER] Ação desconhecida: ${action}`);
       sentMessage = "Desculpe, não consegui processar sua solicitação. Tente novamente.";
-      await sendWhatsAppText(from, sentMessage);
+      await sendWhatsAppText(sendTo, sentMessage);
   }
   
   return sentMessage;
@@ -209,7 +240,8 @@ async function processAgentResponse(agentResponse, context) {
  * @returns {Promise<string|null>} - Mensagem enviada
  */
 async function processToolResult(result, toolName, context) {
-  const { from } = context;
+  const { from, originalJid } = context;
+  const sendTo = originalJid || from; // Prioriza o JID original se disponível
   let sentMessage = null;
   
   if (result.success) {
@@ -223,7 +255,7 @@ async function processToolResult(result, toolName, context) {
     
     // Tool executada com sucesso - enviar mensagem formatada
     if (result.message) {
-      await sendWhatsAppText(from, result.message);
+      await sendWhatsAppText(sendTo, result.message);
       sentMessage = result.message;
     }
   } else {
@@ -233,15 +265,15 @@ async function processToolResult(result, toolName, context) {
     if (result.error === "missing_params") {
       // Parâmetros faltando - pedir ao usuário
       sentMessage = result.message || "Preciso de mais algumas informações para continuar.";
-      await sendWhatsAppText(from, sentMessage);
+      await sendWhatsAppText(sendTo, sentMessage);
     } else if (result.error === "no_bank" || result.error === "no_categories") {
       // Erro de configuração do usuário
       sentMessage = result.message;
-      await sendWhatsAppText(from, sentMessage);
+      await sendWhatsAppText(sendTo, sentMessage);
     } else {
       // Erro genérico
       sentMessage = result.message || "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente.";
-      await sendWhatsAppText(from, sentMessage);
+      await sendWhatsAppText(sendTo, sentMessage);
     }
   }
   

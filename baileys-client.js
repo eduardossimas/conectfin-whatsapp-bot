@@ -7,9 +7,11 @@ import makeWASocket, {
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
-import { readdir, unlink, stat, readFile } from 'fs/promises';
+import { readdir, unlink, stat, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { isAllowedWhatsAppPhone } from './config/environment.js';
+import { isAllowedWhatsAppPhone, getPhoneVariants } from './config/environment.js';
+import { getUserByPhone } from './services/database-service.js';
+import { sleep } from './utils/helpers.js';
 
 // ======================= CONFIGURAÇÃO =======================
 let sock = null;
@@ -30,6 +32,17 @@ async function loadLidMappings() {
   try {
     const authDir = 'baileys_auth';
     const files = await readdir(authDir);
+    const lidFiles = files.filter(f => f.startsWith('lid-mapping-'));
+
+    //console.log(`📂 [BAILEYS] ${files.length} arquivos, ${lidFiles.length} lid-mapping`);
+
+    if (lidFiles.length > 0) {
+      // Testar parse do primeiro arquivo
+      const test = await readFile(join(authDir, lidFiles[0]), 'utf-8');
+
+      //console.log(`📂 [BAILEYS] Conteúdo exemplo: ${test.substring(0,50)}`);
+
+    }
     
     // Procurar arquivos lid-mapping-*_reverse.json
     const reverseMappings = files.filter(f => f.startsWith('lid-mapping-') && f.endsWith('_reverse.json'));
@@ -41,7 +54,9 @@ async function loadLidMappings() {
         const lid = file.replace('lid-mapping-', '').replace('_reverse.json', '');
         const phoneNumber = JSON.parse(content);
         lidMappingCache[lid] = phoneNumber;
-        console.log(`📍 [BAILEYS] LID mapeado: ${lid} -> ${phoneNumber}`);
+
+        //console.log(`📍 [BAILEYS] LID mapeado: ${lid} -> ${phoneNumber}`);
+
       } catch (e) {
         // Ignorar arquivos inválidos
       }
@@ -58,7 +73,9 @@ async function loadLidMappings() {
         const lid = JSON.parse(content);
         if (!lidMappingCache[lid]) {
           lidMappingCache[lid] = phoneNumber;
-          console.log(`📍 [BAILEYS] LID mapeado (reverso): ${lid} -> ${phoneNumber}`);
+
+          //console.log(`📍 [BAILEYS] LID mapeado (reverso): ${lid} -> ${phoneNumber}`);
+
         }
       } catch (e) {
         // Ignorar arquivos inválidos
@@ -204,20 +221,18 @@ function formatWhatsAppToE164(jid) {
     
     // Verificar se temos mapeamento para este LID
     if (lidMappingCache[lid]) {
-      const realNumber = lidMappingCache[lid];
-      console.log(`🔄 [BAILEYS] Resolvendo LID: ${lid} -> ${realNumber}`);
-      return `+${realNumber}`;
+      console.log(`🔄 [BAILEYS] Resolvendo LID: ${lid} -> ${lidMappingCache[lid]}`);
+      return `+${lidMappingCache[lid]}`;
     }
-    
-    console.warn(`⚠️ [BAILEYS] LID não mapeado: ${lid}`);
-    // Retornar mesmo assim, mas vai falhar na busca do usuário
-    return `+${lid}@lid`;
+      
+      console.warn(`⚠️ [BAILEYS] LID não mapeado: ${lid}. Retornando identificador LID como fallback.`);
+      return `lid:${lid}`;
   }
-  
-  // Remove @s.whatsapp.net e @c.us
-  const digits = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-  return `+${digits}`;
+    // Remove @s.whatsapp.net e @c.us
+    const digits = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    return `+${digits}`;
 }
+
 
 /**
  * Detecta tipo de mensagem
@@ -465,7 +480,13 @@ export async function startBaileys() {
           console.log('\n🧹 [BAILEYS] Executando limpeza periódica de cache...');
           cleanAuthCache();
         }, 6 * 60 * 60 * 1000); // 6 horas
-        
+
+        setTimeout(async () => {
+          await loadLidMappings();
+
+          //console.log(`📊 [BAILEYS] Após delay de 15s : ${Object.keys(lidMappingCache).length} mapeamentos`);
+
+        }, 15000);
         resolve(sock);
       }
     });
@@ -484,9 +505,25 @@ export async function startBaileys() {
 
         // Ignora qualquer remetente fora da whitelist
         const from = formatWhatsAppToE164(message.key.remoteJid);
-        if (!isAllowedWhatsAppPhone(from)) {
-          console.log(`🚫 [BAILEYS] Mensagem ignorada de número não autorizado: ${from}`);
-          continue;
+
+        if(from.startsWith('lid:')) {
+          console.log(`⚠️ [BAILEYS] LID não resolvido, permitindo passagem: ${from}`);
+        } else if (!isAllowedWhatsAppPhone(from)) {
+          const phoneVariants = getPhoneVariants(from);
+          let user = null;
+          for(const variant of phoneVariants) {
+            console.log(`🔍 [BAILEYS] Verificando número no banco de dados: ${variant}`);
+            user = await getUserByPhone(variant);
+            if(user){
+              console.log(`✅ [BAILEYS] Número autorizado via banco de dados: ${variant}`);
+              break;
+            }
+          }
+          if(!user) {
+            console.log(`🚫 [BAILEYS] Mensagem de número não autorizado: ${from}. Ignorando.`);
+            continue;
+          }
+          console.log(`✅ [BAILEYS] Mensagem de número autorizado: ${from}, via Banco de Dados.`);
         }
         
         console.log('\n📨 [BAILEYS] Nova mensagem recebida!');
@@ -501,6 +538,34 @@ export async function startBaileys() {
           }
         }
       }
+    });
+
+    // Evento: Atualização de contatos (para mapear LIDs)
+    sock.ev.on('contacts.upsert', async(contacts) => {
+      for(const contact of contacts) {
+      // contacts.upsert devolve objetos como:
+      // { id: '5532991473412@s.whatsapp.net', lid: '21981743317016@lid', name: '...', notify: '...' }
+    
+        // Ignora contatos sem ID ou com ID de LID (não é número real é LID)
+        if(!contact.id || contact.id.includes('@lid')) continue;
+
+          const phoneNumber = contact.id.replace('@s.whatsapp.net', '').replace('@c.us', '');
+
+          //Se tiver o campo lid, mapeia para o número real
+          if(contact.lid && contact.lid.includes('@lid')){
+            const lid = contact.lid.replace('@lid', '');
+            if(!lidMappingCache[lid]){
+              lidMappingCache[lid] = phoneNumber;
+
+              //console.log(`🔄 [BAILEYS] Novo mapeamento LID detectado: ${lid} -> ${phoneNumber}`);
+
+              //Persistir mapeamento em arquivo para futuras execuções
+              try{
+                await writeFile(join('baileys_auth', `lid-mapping-${lid}_reverse.json`), JSON.stringify(phoneNumber), 'utf-8');
+              } catch(e){}
+            }
+          }
+        }
     });
   });
 }
@@ -521,14 +586,21 @@ export async function sendText(to, text) {
     throw new Error('WhatsApp não conectado. Execute startBaileys() primeiro.');
   }
 
-  if (!isAllowedWhatsAppPhone(to)) {
-    throw new Error(`Destino não autorizado para envio: ${to}`);
+  if(to.includes('@lid')) {
+    console.log(`⚠️ [BAILEYS] Tentativa de envio para LID: ${to}.`);
+    await sock.sendMessage(to, { text });
+    console.log('✅ [BAILEYS] Mensagem enviada!');
+    return;
   }
   
   const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);
   
   console.log(`📤 [BAILEYS] Enviando mensagem para ${jid}`);
-  
+  try { await sock.sendPresenceUpdate('composing', jid); } catch(e) {}
+  await sleep(500);   
+  try { await sock.sendPresenceUpdate('paused', jid); } catch(e) {}
+  await sleep(200);
+
   await sock.sendMessage(jid, { text });
   
   console.log('✅ [BAILEYS] Mensagem enviada!');
@@ -546,8 +618,11 @@ export async function sendImage(to, imageBuffer, caption = '') {
     throw new Error('WhatsApp não conectado. Execute startBaileys() primeiro.');
   }
 
-  if (!isAllowedWhatsAppPhone(to)) {
-    throw new Error(`Destino não autorizado para envio: ${to}`);
+  if(to.includes('@lid')) {
+    console.log(`⚠️ [BAILEYS] Tentativa de envio para LID: ${to}.`);
+    await sock.sendMessage(to, { image: imageBuffer, caption: caption });
+    console.log('✅ [BAILEYS] Mensagem enviada!');
+    return;
   }
   
   const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);
@@ -574,6 +649,7 @@ export async function parseMessage(message) {
   
   const result = {
     from,
+    originalJid: message.key.remoteJid,
     type,
     text,
     caption: '',

@@ -12,7 +12,7 @@ function normalizeWhatsAppPhone(raw = "") {
   return digits ? `+${digits}` : "";
 }
 
-function getPhoneVariants(phone = "") {
+export function getPhoneVariants(phone = "") {
   const normalized = normalizeWhatsAppPhone(phone);
   if (!normalized) return [];
 
