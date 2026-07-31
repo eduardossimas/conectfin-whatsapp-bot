@@ -33,10 +33,6 @@ if (WHATSAPP_MODE === 'waba') {
  * @param {string} text - Texto da mensagem
  */
 export async function sendWhatsAppText(to, text) {
-  if (!isAllowedWhatsAppPhone(to)) {
-    throw new Error(`Destino não autorizado para envio: ${to}`);
-  }
-
   try {
     console.log(`📤 [SEND] Enviando via ${WHATSAPP_MODE.toUpperCase()} para ${to}`);
     console.log(`📝 [SEND] Mensagem: ${text.substring(0, 100)}...`);
@@ -70,10 +66,6 @@ export async function sendWhatsAppText(to, text) {
  * @param {string} caption - Legenda opcional
  */
 export async function sendWhatsAppImage(to, imageBuffer, caption = "") {
-  if (!isAllowedWhatsAppPhone(to)) {
-    throw new Error(`Destino não autorizado para envio: ${to}`);
-  }
-
   try {
     console.log(`📤 [SEND] Enviando imagem via ${WHATSAPP_MODE.toUpperCase()} para ${to}`);
     console.log(`📸 [SEND] Tamanho: ${imageBuffer.length} bytes`);

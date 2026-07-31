@@ -271,8 +271,7 @@ async function runLLMOpenAI(system, userParts, options = {}) {
       } catch (parseError) {
         console.error(`❌ [AI] Erro ao parsear structured output:`, parseError.message);
         // Tentar limpar e parsear
-        const cleaned = txt.replace(/```json|```/g, "").trim();
-        return JSON.parse(cleaned);
+        return JSON.parse(sanitizeJsonString(txt));
       }
     }
     
@@ -334,8 +333,7 @@ async function runLLMGemini(system, userParts, options = {}, retryCount = 0) {
       } catch (parseError) {
         console.error(`❌ [AI] Erro ao parsear structured output Gemini:`, parseError.message);
         // Tentar limpar e parsear
-        const cleaned = txt.replace(/```json|```/g, "").trim();
-        return JSON.parse(cleaned);
+        return JSON.parse(sanitizeJsonString(txt));
       }
     }
     
@@ -487,6 +485,20 @@ categorias_existentes: ${categoriaNames.join(', ')}`;
   }
 }
 
+/**
+*Função para corrigir a parte de caractéres inválidos como acentos que podem quebrar o JSON do structured output.
+**/
+function sanitizeJsonString(str){
+  if (typeof str !== "string") return str;
+  return str
+    .replace(/```json|```/g, "")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // Remove caracteres de controle
+    .replace(/[\u2018\u2019\u201C\u201D]/g, "'") // Substitui aspas curvas por simples
+    .replace(/\r?\n|\r/g, " ") // Remove quebras de linha
+    .trim();
+}
+
+
 // ========================= AGENT (NOVO SISTEMA DE TOOLS) ========================
 
 import dayjs from "dayjs";
@@ -571,9 +583,9 @@ export async function runAgent(userMessage, mediaParts = [], context = {}) {
     // Parsear parameters_json para objeto parameters
     if (parsed.parameters_json) {
       try {
-        parsed.parameters = JSON.parse(parsed.parameters_json);
+        parsed.parameters = JSON.parse(sanitizeJsonString(parsed.parameters_json));
       } catch (e) {
-        console.warn(`⚠️ [AGENT] Não foi possível parsear parameters_json:`, parsed.parameters_json);
+        console.warn(`⚠️ [AGENT] Não foi possível parsear parameters_json:`, sanitizeJsonString(parsed.parameters_json));
         parsed.parameters = {};
       }
     } else {

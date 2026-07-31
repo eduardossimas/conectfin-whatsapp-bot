@@ -17,20 +17,16 @@ export function getPhoneVariants(phone = "") {
   if (!normalized) return [];
 
   const digits = normalized.replace(/^\+/, "");
-  const variants = new Set([normalized]);
+  const variants = new Set();
 
   // Brasil: aceita equivalência entre formatos com e sem nono dígito.
   // Exemplo: +5532991473412 <-> +553291473412
-  if (digits.startsWith("55")) {
-    if (digits.length === 13) {
-      const withouNinthDigit = `${digits.slice(0, 4)}${digits.slice(5)}`;
-      variants.add(`+${withouNinthDigit}`);
-    }
-
-    if (digits.length === 12) {
-      const withNinthDigit = `${digits.slice(0, 4)}9${digits.slice(4)}`;
-      variants.add(`+${withNinthDigit}`);
-    }
+  if (digits.startsWith("55") && (digits.length === 12)) {
+    variants.add(`+${digits.slice(0, 4)}9${digits.slice(4)}`);
+  }
+  variants.add(normalized);
+  if (digits.length === 13 && digits.startsWith("55")) {
+      variants.add(`+${digits.slice(0, 4)}${digits.slice(5)}`);
   }
 
   return Array.from(variants);

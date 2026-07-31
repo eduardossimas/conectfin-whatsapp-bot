@@ -8,7 +8,7 @@ export const TOOLS = {
     name: "create_transaction",
     description: "Cria um lançamento financeiro (receita ou despesa) no sistema",
     required_params: ["tipo", "descricao", "valor"],
-    optional_params: ["data_competencia", "data_pagamento", "data_vencimento", "categoria_sugerida"],
+    optional_params: ["data_competencia", "data_pagamento", "data_vencimento", "categoria_sugerida", "confirmada"],
     param_types: {
       tipo: { type: "string", enum: ["receita", "despesa"] },
       descricao: { type: "string", maxLength: 140 },
@@ -16,7 +16,8 @@ export const TOOLS = {
       data_competencia: { type: "date", format: "YYYY-MM-DD" },
       data_pagamento: { type: "date", format: "YYYY-MM-DD", nullable: true },
       data_vencimento: { type: "date", format: "YYYY-MM-DD", nullable: true },
-      categoria_sugerida: { type: "string", nullable: true }
+      categoria_sugerida: { type: "string", nullable: true },
+      confirmada: {type: "boolean", default: false}
     }
   },
   
@@ -97,11 +98,16 @@ export function validateToolParams(toolName, params = {}) {
   const missing = [];
   
   // Verificar parâmetros obrigatórios
+const temConfirmada = tool.param_types?.confirmada;
+if (temConfirmada && params.confirmada === true) {
+  // skip — não valida obrigatórios, pending tem os dados
+} else {
   for (const requiredParam of tool.required_params) {
     if (params[requiredParam] === undefined || params[requiredParam] === null) {
       missing.push(requiredParam);
     }
   }
+}
   
   // Validar tipos dos parâmetros fornecidos
   for (const [paramName, paramValue] of Object.entries(params)) {

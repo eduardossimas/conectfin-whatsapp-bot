@@ -19,6 +19,7 @@ import { formatCurrency, formatDate } from "../utils/helpers.js";
 import { validateToolParams, getMissingParamsMessage } from "./definitions.js";
 import { gerarGraficoFluxoCaixa } from "../services/chart-service-svg.js";
 import { sendWhatsAppImage } from "../services/whatsapp-service-unified.js";
+import { setPending, getPendingWithMerge, clearPending } from "../services/pending-transaction.js";
 
 // Configurar dayjs com plugins
 dayjs.extend(utc);
@@ -68,7 +69,7 @@ export async function executeTool(toolName, params, context) {
     get_receivables: executeGetReceivables,
     get_cashflow: executeGetCashflow,
     list_transactions: executeListTransactions,
-    analyze_cashflow: executeAnalyzeCashflow
+    analyze_cashflow: executeAnalyzeCashflow,
   };
   
   const executor = executors[toolName];
@@ -98,20 +99,59 @@ export async function executeTool(toolName, params, context) {
 // ========================= EXECUTORES ESPECÍFICOS =========================
 
 /**
- * Cria um lançamento financeiro
+ * Cria um lançamento financeiro, mas antes confirma o lançamento com o usuário
  */
 async function executeCreateTransaction(params, context) {
   const { user } = context;
-  const today = dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
-  
+
+  //============ SE CONFIRMADO: executa pendente =============
+  if(params.confirmada){
+    const merged = getPendingWithMerge(user.id, params);
+    clearPending(user.id);
+    if(!merged){
+      return {
+        success: false,
+        error: "no_pending",
+        message: "Não há transações pendentes para confirmar. Por favor, inicie uma nova transação."
+      };
+    }
+    return await actuallyCreateTransaction(merged, context);
+  }
+
   // Normalizar dados
+  const today = dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
   const tipo = params.tipo; // "receita" ou "despesa"
   const descricao = params.descricao;
   const valor = Number(params.valor);
   const data_competencia = params.data_competencia || today;
+
+  //============ PRIMEIRA CHAMADA: salva como pendente e retorna a preview =============  
+  const tipoEmoji = tipo === "receita" ? "💚" : "🔴";
+  const tipoLabel = tipo === "receita" ? "Receita" : "Despesa";
+  const valorFormatado = formatCurrency(valor);
+  const dataFormatada = formatDate(data_competencia);
+
+  const previewMsg = `${tipoEmoji} *Vou registrar*
+ ${descricao}
+💰 ${valorFormatado}
+📅 ${dataFormatada}
+🕒 Confirma o lançamento?`;
+
+  setPending(user.id, params);
+
+  return { success: true, message: previewMsg};
+}
+
+async function actuallyCreateTransaction(params, context) {
+  const { user } = context;
+
+  const tipo = params.tipo; // "receita" ou "despesa"
+  const descricao = params.descricao;
+  const valor = Number(params.valor);
+  const data_competencia = params.data_competencia || dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
   const data_pagamento = params.data_pagamento || null;
   const data_vencimento = params.data_vencimento || null;
-  
+
   // Buscar banco padrão
   const id_banco = await getBancoIdPadrao(user.id);
   
@@ -134,7 +174,7 @@ async function executeCreateTransaction(params, context) {
     };
   }
   
-  // Escolher melhor categoria
+  // Assistente escolhe melhor categoria
   let id_categoria = allCategorias[0]?.id;
   
   if (params.categoria_sugerida) {
@@ -161,12 +201,6 @@ async function executeCreateTransaction(params, context) {
     id_categoria: id_categoria
   });
   
-  // Formatar resposta
-  const tipoEmoji = tipo === "receita" ? "💚" : "🔴";
-  const tipoLabel = tipo === "receita" ? "Receita" : "Despesa";
-  const valorFormatado = formatCurrency(valor);
-  const dataFormatada = formatDate(data_competencia);
-  
   let statusPagamento = "";
   if (data_pagamento) {
     statusPagamento = tipo === "receita" ? "✅ Recebido" : "✅ Pago";
@@ -176,6 +210,11 @@ async function executeCreateTransaction(params, context) {
     statusPagamento = "⏳ Pendente";
   }
   
+  const tipoEmoji = tipo === "receita" ? "💚" : "🔴";
+  const tipoLabel = tipo === "receita" ? "Receita" : "Despesa";
+  const valorFormatado = formatCurrency(valor);
+  const dataFormatada = formatDate(data_competencia);
+
   const message = `${tipoEmoji} *${tipoLabel} registrada!*
 
 📝 ${descricao}
@@ -306,7 +345,8 @@ ${pendentes.length > 10 ? `\n... e mais ${pendentes.length - 10} contas` : ""}
  * Gera fluxo de caixa COM GRÁFICO
  */
 async function executeGetCashflow(params, context) {
-  const { user, from } = context;
+  const { user, from, originalJid } = context;
+  const sendTo = originalJid || from;
   
   // Determinar período
   const today = dayjs.tz(dayjs(), "America/Sao_Paulo");
@@ -398,8 +438,8 @@ async function executeGetCashflow(params, context) {
 _Gráfico gerado em ${dayjs().tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm')}_`;
   
   // Enviar imagem diretamente (a tool envia a imagem)
-  if (from && graficoBuffer) {
-    await sendWhatsAppImage(from, graficoBuffer, message);
+  if (sendTo && graficoBuffer) {
+    await sendWhatsAppImage(sendTo, graficoBuffer, message);
   }
   
   return {
