@@ -173,6 +173,7 @@ class DatabaseService {
       if (filters.account_id) params.account_id = filters.account_id;
       if (filters.startDate) params.startDate = filters.startDate;
       if (filters.endDate) params.endDate = filters.endDate;
+      if (filters.status) params.status = filters.status;
 
       const transactions = await apiClient.get('/transactions', params);
       return transactions || [];
@@ -313,17 +314,13 @@ export async function createLancamento(lancamentoData) {
 }
 
 export async function getContasAPagar(userId) {
-  return dbService.getTransactions(userId, { 
-    type: 'despesa',
-    status: 'pending'
-  });
+  const transactions = await dbService.getTransactions(userId, { type: 'despesa', status: 'pending', limit: 100 });
+  return (transactions || []).filter(t => t.tipo_lancamento === 'despesa' && !t.data_pagamento);
 }
 
 export async function getContasAReceber(userId) {
-  return dbService.getTransactions(userId, { 
-    type: 'receita',
-    status: 'pending'
-  });
+  const transactions = await dbService.getTransactions(userId, { type: 'receita', status: 'pending', limit: 100 });
+  return (transactions || []).filter(t => t.tipo_lancamento === 'receita' && !t.data_pagamento);
 }
 
 export async function getLancamentosByPeriodo(userId, dataInicio, dataFim) {

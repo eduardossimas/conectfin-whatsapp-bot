@@ -73,6 +73,20 @@ export const TOOLS = {
     param_types: {
       periodo: { type: "string", description: "Período para análise" }
     }
+  },
+
+  pay_transaction: {
+    name: "pay_transaction",
+    description: "Marca um lançamento pendente como pago/recebido, atualizando a conta já existente em vez de criar uma duplicada",
+    required_params: ["descricao"],
+    optional_params: ["tipo", "valor", "data_pagamento", "indice"],
+    param_types: {
+      descricao: { type: "string", maxLength: 140 },
+      tipo: { type: "string", enum: ["receita", "despesa"] },
+      valor: { type: "number", min: 0.01 },
+      data_pagamento: { type: "date", format: "YYYY-MM-DD", nullable: true },
+      indice: { type: "number", min: 1, max: 5}
+    }
   }
 };
 
@@ -99,14 +113,23 @@ export function validateToolParams(toolName, params = {}) {
   
   // Verificar parâmetros obrigatórios
 const temConfirmada = tool.param_types?.confirmada;
-if (temConfirmada && params.confirmada === true) {
-  // skip — não valida obrigatórios, pending tem os dados
+const temIndice = params.indice != null;
+if ((temConfirmada && params.confirmada === true) || temIndice) {
+  // skip obrigatórios — pending tem os dados ou o candidato vem da lista de escolha
 } else {
   for (const requiredParam of tool.required_params) {
     if (params[requiredParam] === undefined || params[requiredParam] === null) {
       missing.push(requiredParam);
     }
   }
+}
+
+if (temConfirmada && params.confirmada === true) {
+  // skip obrigatórios
+} else if (temIndice) {
+  // skip obrigatórios (descricao) — o candidato vem da lista guardada
+} else {
+  // valida required_params
 }
   
   // Validar tipos dos parâmetros fornecidos

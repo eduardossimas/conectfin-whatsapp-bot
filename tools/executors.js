@@ -19,7 +19,7 @@ import { formatCurrency, formatDate } from "../utils/helpers.js";
 import { validateToolParams, getMissingParamsMessage } from "./definitions.js";
 import { gerarGraficoFluxoCaixa } from "../services/chart-service-svg.js";
 import { sendWhatsAppImage } from "../services/whatsapp-service-unified.js";
-import { setPending, getPendingWithMerge, clearPending } from "../services/pending-transaction.js";
+import { setPending, getPendingWithMerge, clearPending, setPendingChoice, getPendingChoice, clearPendingChoice } from "../services/pending-transaction.js";
 
 // Configurar dayjs com plugins
 dayjs.extend(utc);
@@ -70,6 +70,7 @@ export async function executeTool(toolName, params, context) {
     get_cashflow: executeGetCashflow,
     list_transactions: executeListTransactions,
     analyze_cashflow: executeAnalyzeCashflow,
+    pay_transaction: executePayTransaction,
   };
   
   const executor = executors[toolName];
@@ -123,18 +124,18 @@ async function executeCreateTransaction(params, context) {
   const tipo = params.tipo; // "receita" ou "despesa"
   const descricao = params.descricao;
   const valor = Number(params.valor);
-  const data_competencia = params.data_competencia || today;
+  const data_vencimento = params.data_vencimento || today;
 
   //============ PRIMEIRA CHAMADA: salva como pendente e retorna a preview =============  
   const tipoEmoji = tipo === "receita" ? "💚" : "🔴";
   const tipoLabel = tipo === "receita" ? "Receita" : "Despesa";
   const valorFormatado = formatCurrency(valor);
-  const dataFormatada = formatDate(data_competencia);
+  const dataFormatada = formatDate(data_vencimento);
 
   const previewMsg = `${tipoEmoji} *Vou registrar*
  ${descricao}
 💰 ${valorFormatado}
-📅 ${dataFormatada}
+📅 Data: ${dataFormatada}
 🕒 Confirma o lançamento?`;
 
   setPending(user.id, params);
@@ -246,7 +247,7 @@ async function executeGetPayables(params, context) {
   // Buscar despesas sem data_pagamento
   const transactions = await dbService.getTransactions(user.id, {
     type: 'despesa',
-    limit
+    limit: 100
   });
   
   // Filtrar apenas pendentes (sem data_pagamento) E que sejam despesas
@@ -299,7 +300,7 @@ async function executeGetReceivables(params, context) {
   // Buscar receitas sem data_pagamento
   const transactions = await dbService.getTransactions(user.id, {
     type: 'receita',
-    limit
+    limit: 100
   });
   
   // Filtrar apenas pendentes (sem data_pagamento) E que sejam receitas
@@ -454,6 +455,170 @@ _Gráfico gerado em ${dayjs().tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm')
     },
     message: null // Não enviar mensagem de texto, já enviou imagem
   };
+}
+
+export async function executePayTransaction(params, context) {
+  const { user } = context;
+
+  const descricao = params.descricao;
+  const tipo = params.tipo || null;
+  const valor = params.valor != null ? Number(params.valor) : null;
+  const data_pagamento = params.data_pagamento || dayjs.tz(dayjs(), "America/Sao_Paulo").format("YYYY-MM-DD");
+
+
+  // === RAMO DE ESCOLHA (usuário respondeu um número) ===
+  if (params.indice != null) {
+    const candidatos = getPendingChoice(user.id);
+    if (!candidatos) {
+      return { success: false, error: "no_pending_choice",
+        message: "Já não tenho essa lista aqui. Me diga de novo qual conta você pagou." };
+    }
+
+    const alvo = candidatos[params.indice - 1];
+    if (!alvo) {
+      return { success: false, error: "invalid_indice",
+        message: `Escolha um número entre 1 e ${candidatos.length}.` };
+    }
+    if (alvo.criarNova) {
+      clearPendingChoice(user.id);
+      return {
+        success: false,
+        error: "create_new_request",
+        descricao: alvo.descricao,
+        tipo: tipo,
+        message: `Certo! Vou iniciar a criação da nova conta "${alvo.descricao}".`
+      };
+    }
+    const aindaPendente = await verificarAindaPendente(user.id, alvo.id);
+    clearPendingChoice(user.id);
+    if (!aindaPendente) {
+      return { success: false, error: "already_paid",
+        message: `A conta "${alvo.descricao}" já consta como paga no sistema.` };
+    }
+    return marcarComoPaga(alvo, user.id, data_pagamento);
+}
+  
+  // Buscar transação pendente correspondente
+  const transactions = await dbService.getTransactions(user.id, { limit: 100 });
+  const pendentes = (transactions || []).filter(t => {
+    if (t.data_pagamento) return false; // Já paga
+    if(tipo && t.tipo_lancamento !== tipo) return false;
+    return true;});
+
+  if (pendentes.length === 0) {
+    return {
+      success: false,
+      error: "no_pending",
+      message: "Não há transações pendentes para pagar. Quer que eu crie uma nova transação?"
+    };
+  }
+
+  // Normalizar descrição para busca e pontuar cada candidato por similaridade
+  const alvo = normalizarTexto(descricao);
+  const scored = pendentes
+  .map(t => ({ t, score: calcularScore(t, alvo, valor) }))
+  .sort((a,b) => b.score-a.score);
+
+  const melhor=scored[0];
+
+  //Sem candidatos com bom score, sugerir nova transação
+  if(melhor.score < 0.4){
+    const lista = pendentes.slice(0, 5).map((t, i) =>
+      `${i + 1}. ${t.descricao} - ${formatCurrency(t.valor)}${t.data_vencimento ? ` (vence ${formatDate(t.data_vencimento)})` : ''}`).join("\n");
+    const criarIndice = pendentes.length + 1;
+    setPendingChoice(user.id, [...pendentes, { criarNova: true, descricao }]);
+    return {
+      success: false,
+      error: "no_match",
+      message: `Não encontrei nenhuma pendente com "${descricao}".\n\nSuas contas a pagar:\n${lista}\n${criarIndice}. ✨ Criar nova transação "${descricao}"\n\nResponda com o número correspondente.`
+    };
+  }
+
+  // Perguntar sobre candidatos parecidos
+  const empatados = scored.filter(s => s.score >= 0.4 && Math.abs(s.score - melhor.score) < 0.05);
+  if (empatados.length > 1) {
+    const lista = empatados.slice (0, 5).map((s, i) => 
+      `${i + 1}. ${s.t.descricao} - ${formatCurrency(s.t.valor)}${s.t.data_vencimento ? ` (vence ${formatDate(s.t.data_vencimento)})` : ''}`).join("\n");
+    setPendingChoice(user.id, empatados.map(s => s.t));
+    return {
+      success: false,
+      error: "multiple_matches",
+      message: `Encontrei mais de uma transação que combina com "${descricao}":\n\n${lista}\n
+      \nQual delas você quer pagar? Responda com o número correspondente (1-${empatados.length})`
+    };
+  }
+
+  //Caso de match único, marcar como pago
+  const alvoTransacao = melhor.t;
+  await dbService.updateTransaction(alvoTransacao.id, user.id, {
+    id_banco: alvoTransacao.id_banco, 
+    id_categoria: alvoTransacao.id_categoria, 
+    descricao: alvoTransacao.descricao, 
+    valor: Number(alvoTransacao.valor),
+    tipo_lancamento: alvoTransacao.tipo_lancamento,
+    data_competencia: alvoTransacao.data_competencia,
+    data_lancamento: alvoTransacao.data_lancamento,
+    data_vencimento: alvoTransacao.data_vencimento,
+    data_pagamento: data_pagamento
+  });
+
+  const ehReceita = alvoTransacao.tipo_lancamento === 'receita';
+  const verbo = ehReceita ? 'Recebida' : 'Paga';
+  const emoji = ehReceita ? '💚' : '🔴';
+
+  return marcarComoPaga(alvoTransacao, user, data_pagamento);
+}
+
+async function marcarComoPaga(transacao, userID, data_pagamento) {
+  await dbService.updateTransaction(transacao.id, userID, {
+    id_banco: transacao.id_banco,
+    id_categoria: transacao.id_categoria,
+    descricao: transacao.descricao,
+    valor: Number(transacao.valor),
+    tipo_lancamento: transacao.tipo_lancamento,
+    data_competencia: transacao.data_competencia,
+    data_lancamento: transacao.data_lancamento,
+    data_vencimento: transacao.data_vencimento,
+    data_pagamento: data_pagamento
+  });
+
+  const ehReceita = transacao.tipo_lancamento === 'receita';
+  const verbo = ehReceita ? 'Recebida' : 'Paga';
+  const emoji = ehReceita ? '💚' : '🔴';
+
+  return {
+    success: true,
+    data: {id: transacao.id, descricao: transacao.descricao, valor: transacao.valor, data_pagamento: data_pagamento},
+    message: `${emoji} *${transacao.descricao}* marcada como ${verbo} em ${formatDate(data_pagamento)}.\n
+    \nEla não aparece mais em ${ehReceita ? "contas a receber" : "contas a pagar"}.`
+  };
+}
+
+async function verificarAindaPendente(userID, transactionID) {
+  const transactions = await dbService.getTransactions(userID, {limit: 100});
+  return (transactions || []).some(t => t.id === transactionID && !t.data_pagamento);
+}
+
+function calcularScore(transacao, alvo, valor) {
+  const desc = normalizarTexto(transacao.descricao);
+  if (!desc || !alvo) return 0;
+  if (desc === alvo) return 1;
+  if (desc.includes(alvo) || alvo.includes(desc)) return 0.9;
+  
+  //Palavras padrões para evitar match falho
+  const stopwords = new Set(["conta","de","da","do","das","pagar","paguei","pagamento","valor","hoje","agora","minhas","minha","o","a","em","para"]);
+  const tokenAlvo = alvo.split(' ').filter(t => t.length > 2 && !stopwords.has(t));
+  const tokenDesc = desc.split(' ').filter(t => t.length > 2 && !stopwords.has(t));
+  if (tokenAlvo.length === 0) return 0;
+
+  const iguais = tokenAlvo.filter(t => tokenDesc.includes(t)).length;
+  let score = iguais / tokenAlvo.length;
+
+  if(valor != null && transacao.valor != null){
+    if(Math.abs(transacao.valor - valor) < 0.01) score += 0.25;
+    else if (score > 0.5) score -= 0.2;
+  }
+  return Math.min(score, 1);
 }
 
 /**
@@ -715,4 +880,14 @@ ${filtradas.length > limit ? `\n... e mais ${filtradas.length - limit} lançamen
     },
     message
   };
+}
+
+function normalizarTexto(texto = "") {
+  return String(texto)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")            // remove acentos
+    .replace(/[^a-z0-9\s]/g, " ")               // remove pontuação
+    .replace(/\s+/g, " ")
+    .trim();
 }

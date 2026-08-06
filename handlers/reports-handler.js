@@ -19,7 +19,7 @@ export async function handleViewPayables(from, user) {
   console.log(`💸 [PAYABLES] Buscando contas a pagar para usuário ${user.id}`);
   
   try {
-    const contas = await getContasAPagar(user.id);
+    const contas = (await getContasAPagar(user.id)).filter(c => !c.data_pagamento);
     
     if (!contas || contas.length === 0) {
       await sendWhatsAppText(
@@ -70,7 +70,7 @@ export async function handleViewReceivables(from, user) {
   console.log(`💰 [RECEIVABLES] Buscando contas a receber para usuário ${user.id}`);
   
   try {
-    const contas = await getContasAReceber(user.id);
+    const contas = (await getContasAReceber(user.id)).filter(c => !c.data_pagamento);
     
     if (!contas || contas.length === 0) {
       await sendWhatsAppText(

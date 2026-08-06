@@ -168,7 +168,7 @@ export async function handleWhatsAppMessageAgent(message) {
 }
 
 // Lista de tools válidas para detecção automática
-const VALID_TOOLS = ['create_transaction', 'get_payables', 'get_receivables', 'get_cashflow', 'analyze_cashflow', 'list_transactions'];
+const VALID_TOOLS = ['create_transaction', 'get_payables', 'get_receivables', 'get_cashflow', 'analyze_cashflow', 'list_transactions', 'pay_transaction'];
 
 /**
  * Processa a resposta do agente e executa a ação apropriada
@@ -206,7 +206,7 @@ async function processAgentResponse(agentResponse, context) {
       
     case "call_tool":
       // Se há mensagem prévia, envia primeiro
-      if (message_to_user) {
+      if (message_to_user && tool !== "create_transaction" && tool !== "pay_transaction") {
         await sendWhatsAppText(sendTo, message_to_user);
         await sleep(500);
       }
@@ -270,9 +270,13 @@ async function processToolResult(result, toolName, context) {
       // Erro de configuração do usuário
       sentMessage = result.message;
       await sendWhatsAppText(sendTo, sentMessage);
+    } else if (result.error === "create_new_request") {
+        // Criar uma nova solicitação
+        const novo = await executeTool("create_transaction", { tipo: result.tipo, descricao: result.descricao }, context);
+        sentMessage = novo.message || result.message;
+        await sendWhatsAppText(sendTo, sentMessage);
     } else {
-      // Erro genérico
-      sentMessage = result.message || "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente.";
+      sentMessage = result.message || "Ocorreu um erro ao processar sua solicitação. Tente novamente mais tarde.";
       await sendWhatsAppText(sendTo, sentMessage);
     }
   }
