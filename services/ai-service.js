@@ -9,6 +9,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { config } from "../config/environment.js";
 import { sleep } from "../utils/helpers.js";
+import { TOOLS } from "../tools/definitions.js";
 
 // Setup __dirname para ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +21,11 @@ const openai = config.OPENAI_API_KEY
   : null;
 
 const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
+
+//Cliente Groq gratuito - reutiliza o SDK OpenAi via endpoint compatível
+const groqClient = config.GROQ_API_KEY
+  ? new OpenAI({ apiKey: config.GROQ_API_KEY, baseURL: "https://api.groq.com/openai/v1" })
+  : null;
 
 // ========================= PROMPTS ========================
 function loadPrompt(filename) {
@@ -35,7 +41,9 @@ export const PROMPTS = {
   DOCUMENT_ANALYZER: loadPrompt("system-document-analyzer.md"),
   INTENT_CLASSIFIER: loadPrompt("system-intent-classifier.md"),
   AGENT: loadPrompt("system-agent.md"),
+  POLISHER: loadPrompt("system-message-polisher.md")
 };
+const VALID_TOOLS = Object.keys(TOOLS);
 
 // ========================= SCHEMAS PARA STRUCTURED OUTPUT ========================
 
@@ -78,12 +86,13 @@ export const SCHEMAS = {
     type: SchemaType.OBJECT,
     properties: {
       action: { type: SchemaType.STRING, enum: ["call_tool", "respond", "ask_user"] },
-      tool: { type: SchemaType.STRING, nullable: true },
+      tool: { type: SchemaType.STRING, nullable: true, 
+        enum: ["create_transaction", "get_payables", "get_receivables", "get_cashflow", "list_transactions", "analyze_cashflow", "pay_transaction"]},
       parameters_json: { type: SchemaType.STRING, nullable: true, description: "Parâmetros da tool em formato JSON string" },
       message: { type: SchemaType.STRING, nullable: true },
       message_to_user: { type: SchemaType.STRING, nullable: true }
     },
-    required: ["action"]
+    required: ["action", "tool", "parameters_json", "message", "message_to_user"],
   }
 };
 
@@ -457,7 +466,7 @@ export async function findBestCategory(categoriaSugerida, categoriasExistentes) 
 
   if (!categoriaSugerida) {
     console.log(`⚠️ [AI-CATEGORY] Sem categoria sugerida, usando primeira disponível`);
-    return categoriasExistentes[0];
+    return null;
   }
 
   const categoriaNames = categoriasExistentes.map(cat => cat.nome);
@@ -475,9 +484,31 @@ categorias_existentes: ${categoriaNames.join(', ')}`;
     ]);
     
     const nomeEscolhido = response.trim();
+    const normalizarNome = (s) => 
+      s.trim()
+        .replace(/^["'`]+|["'`]+$/g, "")        // remove aspas nas pontas
+        .replace(/^[.,;:\s]+|[.,;:\s]+$/g, "")   // remove pontuação/whitespace nas pontas
+        .replace(/\s+/g, " ")
+        .toLowerCase();
+    const nomeLimpo = normalizarNome(nomeEscolhido);
     console.log(`🤖 [AI-CATEGORY] IA escolheu: "${nomeEscolhido}"`);
-    
-    return nomeEscolhido;
+
+    const matchExato = categoriasExistentes.find(cat => normalizarNome(cat.nome) === nomeLimpo);
+    if (matchExato) return matchExato.nome;
+
+    const matchContido = categoriasExistentes.find(cat =>  
+      {const nome = normalizarNome(cat.nome); 
+      return nome.includes(nomeLimpo) || nomeLimpo.includes(nome)
+    });
+
+    if (matchContido) {
+      console.log(`⚠️ [AI-CATEGORY] IA escolheu "${nomeEscolhido}", mas não há correspondência exata. Usando categoria contida: "${matchContido.nome}"`);
+      return matchContido.nome;
+    }
+
+    console.warn(`⚠️ [AI-CATEGORY] IA escolheu "${nomeEscolhido}", mas não há correspondência.`);
+
+    return null;
     
   } catch (error) {
     console.error("❌ [AI-CATEGORY] Erro na IA para categoria:", error);
@@ -496,6 +527,21 @@ function sanitizeJsonString(str){
     .replace(/[\u2018\u2019\u201C\u201D]/g, "'") // Substitui aspas curvas por simples
     .replace(/\r?\n|\r/g, " ") // Remove quebras de linha
     .trim();
+}
+
+function deveFazerRetry(parsed) {
+  if (parsed.action === "call_tool") return false;
+
+  const toolDef = TOOLS[parsed.tool];
+  if (!toolDef) return true;
+
+  if (!toolDef.required_params || toolDef.required_params.length === 0) return false;
+
+  const params = parsed.parameters || {};
+  if (toolDef.param_types?.confirmada && params.confirmada === true) return false;
+  if (params.indice != null) return false;
+
+  return !toolDef.required_params.some(p => params[p] !== undefined && params[p] !== null);
 }
 
 
@@ -558,53 +604,150 @@ export async function runAgent(userMessage, mediaParts = [], context = {}) {
   // Adicionar mensagem do usuário
   parts.push({ text: `Mensagem atual do usuário: "${userMessage}"` });
   
-  try {
-    // Usar structured output para garantir formato correto
-    const parsed = await runLLM(
-      systemPrompt, 
-      parts,
-      { schema: SCHEMAS.AGENT, schemaOpenAI: SCHEMAS_OPENAI.AGENT }
-    );
-    
-    console.log(`📤 [AGENT] Resposta estruturada:`, JSON.stringify(parsed).substring(0, 200));
-    
-    // Validar campos obrigatórios
-    if (!parsed.action) {
-      console.warn(`⚠️ [AGENT] Campo 'action' não retornado, usando 'respond'`);
-      parsed.action = "respond";
-      parsed.message = parsed.message || "Desculpe, não entendi. Pode reformular sua pergunta?";
-    }
-    
-    // Normalizar message_to_user para message se necessário
-    if (!parsed.message && parsed.message_to_user) {
-      parsed.message = parsed.message_to_user;
-    }
-    
-    // Parsear parameters_json para objeto parameters
-    if (parsed.parameters_json) {
-      try {
-        parsed.parameters = JSON.parse(sanitizeJsonString(parsed.parameters_json));
-      } catch (e) {
-        console.warn(`⚠️ [AGENT] Não foi possível parsear parameters_json:`, sanitizeJsonString(parsed.parameters_json));
+  const MAX_ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      // Usar structured output para garantir formato correto
+      const parsed = await runLLM(
+        systemPrompt,
+        parts,
+        { schema: SCHEMAS.AGENT, schemaOpenAI: SCHEMAS_OPENAI.AGENT }
+      );
+
+      console.log(`📤 [AGENT] Resposta estruturada:`, JSON.stringify(parsed).substring(0, 200));
+
+      // ==== Sanitização do campo tool ====
+      if (parsed.action === "call_tool") {
+        const rawTool = parsed.tool || "";
+
+        if (!parsed.parameters_json && rawTool) {
+          const match = rawTool.match(/\{[^}]*\}/);
+          if (match) {
+            console.log(`🔧 [AGENT] Extraindo parâmetros JSON do campo 'tool'`);
+            parsed.parameters_json = match[0];
+          }
+        }
+
+        if (rawTool && !VALID_TOOLS.includes(rawTool)) {
+          const encontrada = VALID_TOOLS.find(t => rawTool.includes(t));
+          if (encontrada) {
+            console.log(`🔧 [AGENT] Corrigindo tool de "${rawTool}" para "${encontrada}"`);
+            parsed.tool = encontrada;
+          } else {
+            console.warn(`⚠️ [AGENT] Tool inválida: "${rawTool}".`);
+            parsed.action = "ask_user";
+            parsed.message = "Desculpe, não consegui entender direito. Pode repetir com mais detalhes?";
+          }
+        }
+      }
+
+      // Validar campos obrigatórios
+      if (!parsed.action) {
+        console.warn(`⚠️ [AGENT] Campo 'action' não retornado, usando 'respond'`);
+        parsed.action = "respond";
+        parsed.message = parsed.message || "Desculpe, não entendi. Pode reformular sua pergunta?";
+      }
+
+      // Normalizar message_to_user para message se necessário
+      if (!parsed.message && parsed.message_to_user) {
+        parsed.message = parsed.message_to_user;
+      }
+
+      // Parsear parameters_json para objeto parameters
+      if (parsed.parameters_json) {
+        try {
+          parsed.parameters = JSON.parse(sanitizeJsonString(parsed.parameters_json));
+        } catch (e) {
+          console.warn(`⚠️ [AGENT] Não foi possível parsear parameters_json:`, sanitizeJsonString(parsed.parameters_json));
+          parsed.parameters = {};
+        }
+      } else {
         parsed.parameters = {};
       }
-    } else {
-      parsed.parameters = {};
+
+      // ===== RETRY CORRETIVO (apenas 1 tentativa extra) =====
+      if (attempt === 1 && deveFazerRetry(parsed)) {
+        console.log(`🔄 [AGENT] Saída incompleta (tentativa 1), tentando de novo com instrução corretiva...`);
+        systemPrompt += `\n\n## ⚠️ INSTRUÇÃO DE CORREÇÃO (tentativa 2)\nNa tentativa anterior você chamou uma tool sem retornar os parâmetros necessários ou com nome inválido. Reavalie a mensagem ATUAL do usuário e o histórico e:\n- Extraia TODOS os dados já fornecidos (ex: tipo, descricao, valor, data_vencimento, data_pagamento) e preencha o campo "parameters_json" como string JSON.\n- Use APENAS o nome exato de uma tool válida: ${VALID_TOOLS.join(", ")}.\n- Se ainda faltar informação, responda com action "ask_user" perguntando apenas o que falta.`;
+        continue;
+      }
+
+      console.log(`✅ [AGENT] Ação decidida: ${parsed.action}${attempt === 2 ? " (tentativa 2)" : ""}`);
+
+      if (parsed.action === "call_tool") {
+        console.log(`🔧 [AGENT] Tool: ${parsed.tool}, Params:`, parsed.parameters);
+      }
+
+      return parsed;
+
+    } catch (error) {
+      // Falha na 1ª tentativa → tenta 1x com instrução corretiva
+      if (attempt === 1) {
+        console.log(`🔄 [AGENT] Erro na tentativa 1, tentando com instrução corretiva...`);
+        systemPrompt += `\n\n## ⚠️ INSTRUÇÃO DE CORREÇÃO\nVocê deve responder EXATAMENTE no formato JSON esperado, chamando no máximo UMA tool por vez, com o nome exato e o campo "parameters_json" preenchido como string JSON.`;
+        continue;
+      }
+
+      console.error(`❌ [AGENT] Erro ao executar agente:`, error.message);
+      return {
+        action: "respond",
+        message: "Desculpe, estou tendo dificuldades no momento. Tente novamente em alguns segundos. 🙏"
+      };
     }
-    
-    console.log(`✅ [AGENT] Ação decidida: ${parsed.action}`);
-    
-    if (parsed.action === "call_tool") {
-      console.log(`🔧 [AGENT] Tool: ${parsed.tool}, Params:`, parsed.parameters);
-    }
-    
-    return parsed;
-    
-  } catch (error) {
-    console.error(`❌ [AGENT] Erro ao executar agente:`, error.message);
-    return {
-      action: "respond",
-      message: "Desculpe, estou tendo dificuldades no momento. Tente novamente em alguns segundos. 🙏"
-    };
   }
+}
+
+export async function polishedMessageForWhatsApp(text) {
+  //fallback seguro: sem key, desligado ou texto curto envia a mensagem original
+  if (!groqClient || !config.MESSAGE_POLISH_ENABLED) return [text];
+  if (!text || text.trim().length < config.MESSAGE_POLISH_MIN_LENGTH) return [text];
+
+  const isLong = text.length >= config.MESSAGE_POLISH_SPLIT_MIN_LENGTH;
+
+  try{
+    console.log(`✨ [POLISH] Polindo mensagem (${text.length} chars)...`);
+
+    const response = await groqClient.chat.completions.create({
+      model: config.GROQ_MODEL,
+      temperature: 0.4,
+      top_p: 0.9,
+      max_tokens: 2000,
+      response_format: {type: "json_object"},
+      messages: [
+        { role: "system", content: PROMPTS.POLISHER },
+        { role: "user", content: `Mensagem para polir:\n\n${text}` }
+      ]
+    });
+
+    const raw = response.choices[0].message.content.trim();
+    const parsed = JSON.parse(raw);
+    let blocks = Array.isArray(parsed) ? parsed : null;
+    if (!blocks && parsed && typeof parsed === "object") {
+      // Aceitar chave "blocks" em qualquer capitalização (ex: "Blocks", "BLOCKS")
+      const key = Object.keys(parsed).find(k => k.toLowerCase() === "blocks");
+      if (key) {
+        const valor = parsed[key];
+        blocks = Array.isArray(valor) ? valor : [valor];
+      }
+    }
+    if (!blocks) blocks = [parsed];
+
+    blocks = blocks.map(b => String(b || "").trim()).filter(Boolean);
+
+    if (blocks.length === 0) return [text];
+
+    //Mensagens curtas não são divididas
+    if (!isLong && blocks.length > 1)
+      blocks = [blocks.join("\n\n")];
+
+    //Limite de blocos
+    if (blocks.length > 3)
+      blocks = [blocks.join("\n\n")];
+
+    console.log(`✅ [POLISH] Mensagem polida em ${blocks.length} bloco(s)`);
+    return blocks;
+  } catch (error) {
+    console.error(`❌ [POLISH] Erro ao polir mensagem:`, error.message);
+  }
+  return [text];
 }

@@ -87,6 +87,7 @@ Cria um lançamento financeiro (receita ou despesa), porém solicita ao usuário
 - `data_vencimento`: data de vencimento/agendamento (pode ser futura).
 - `data_pagamento`: data do pagamento/recebimento (YYYY-MM-DD ou null). Se o usuário só AGENDOU (vai pagar/receber depois), deixe null.
 - `categoria_sugerida`: Sugestão de categoria
+- `categoria_sugerida`: SUGIRA SEMPRE uma categoria adequada ao contexto (ex: "Energia Elétrica", "Alimentação", "Serviços", "Aluguel"). O sistema a usa para escolher a melhor categoria cadastrada do usuário.
 - `confirmada`: Confirmação booleana (usar `true` apenas quando o usuário confirmar)
 
 **Regra de agendamento (importante):**
@@ -154,6 +155,11 @@ Quando precisar chamar uma tool, responda no formato:
 
 **ATENÇÃO:** O campo `parameters_json` deve ser uma STRING contendo o JSON dos parâmetros, não um objeto.
 
+**IMPORTANTE: quando `action` for `call_tool`, o campo `parameters_json` é OBRIGATÓRIO.**
+Extraia TODOS os parâmetros da mensagem do usuário (inclusive do histórico) e monte o JSON.
+Exemplo correto: `"parameters_json": "{\"tipo\": \"receita\", \"descricao\": \"Consultoria - Maria\", \"valor\": 500, \"data_vencimento\": \"2026-08-15\"}"`.
+NUNCA responda `call_tool` com `parameters_json` vazio.
+
 Quando responder diretamente (sem chamar tool):
 ```json
 {
@@ -173,6 +179,8 @@ Quando precisar de mais informações:
 ### `pay_transaction`
 Marca uma conta PENDENTE como paga/recebida, ATUALIZANDO o lançamento existente.
 **Parâmetros:** `descricao` (obrigatório), `tipo` ("despesa"/"receita"), `valor` (opcional), `data_pagamento` (opcional, default hoje), `indice` (opcional, use quando a resposta anterior tiver listado várias contas e o usuário responder um número (ex.: '1')).
+
+**NUNCA invente o campo `indice`.** Ele só é válido quando a mensagem ANTERIOR do bot exibiu uma lista numerada de contas E o usuário respondeu APENAS com um número. Fora isso, SEMPRE chame `pay_transaction` com `descricao` (e `valor`, se souber) para que a conta seja localizada pelo texto.
 
 **Quando chamar:** SEMPRE que o usuário disser que PAGOU/RECEBEU uma conta ("paguei", "acabei de pagar", "recebi", "quitei") e essa conta JÁ EXISTIR como pendente. NUNCA crie um lançamento novo nesse caso.
 

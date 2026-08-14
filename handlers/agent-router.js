@@ -13,6 +13,7 @@ import { sleep } from "../utils/helpers.js";
 import { config, isAllowedWhatsAppPhone, getPhoneVariants } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
 import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
+import { polishAndSend } from "../services/message-polish-service.js";
 
 /**
  * Handler principal de mensagens - Sistema de Agente com Tools
@@ -21,6 +22,7 @@ import { addMessage, getConversationHistory } from "../services/conversation-mem
  */
 export async function handleWhatsAppMessageAgent(message) {
   let from;
+  let originalJid = null;
   
   try {
     console.log('\n🤖 [AGENT-ROUTER] Processando mensagem com sistema de agente...');
@@ -36,6 +38,7 @@ export async function handleWhatsAppMessageAgent(message) {
     }
     
     from = parsed.from;
+    originalJid = parsed.originalJid;
     const { type, text, caption, media } = parsed;
     
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
@@ -199,15 +202,23 @@ async function processAgentResponse(agentResponse, context) {
     case "ask_user":
       // Resposta direta ao usuário (sem chamar tool)
       if (message) {
-        await sendWhatsAppText(sendTo, message);
+        await polishAndSend(sendTo, message);
         sentMessage = message;
       }
       break;
       
     case "call_tool":
-      // Se há mensagem prévia, envia primeiro
-      if (message_to_user && tool !== "create_transaction" && tool !== "pay_transaction") {
-        await sendWhatsAppText(sendTo, message_to_user);
+      // Guarda: se a tool for inválida, responde de forma amigável
+      if (!tool || !VALID_TOOLS.includes(tool)) {
+        console.warn(`⚠️ [AGENT-ROUTER] Tool inválida ou não especificada: ${tool}`);
+        sentMessage = "Desculpe, não consegui processar sua solicitação. Posso registrar lançamentos, ver contas a pagar/receber ou gerar seu fluxo de caixa.";
+        await polishAndSend(sendTo, sentMessage);
+        break;
+      }
+
+      if (message_to_user && tool !== 'create_transaction' && tool !== 'pay_transaction') {
+        // Envia mensagem ao usuário antes de executar a tool, exceto para criação/pagamento de transações
+        await polishAndSend(sendTo, message_to_user);
         await sleep(500);
       }
       
@@ -224,7 +235,7 @@ async function processAgentResponse(agentResponse, context) {
     default:
       console.warn(`⚠️ [AGENT-ROUTER] Ação desconhecida: ${action}`);
       sentMessage = "Desculpe, não consegui processar sua solicitação. Tente novamente.";
-      await sendWhatsAppText(sendTo, sentMessage);
+        await polishAndSend(sendTo, sentMessage);
   }
   
   return sentMessage;
@@ -255,7 +266,7 @@ async function processToolResult(result, toolName, context) {
     
     // Tool executada com sucesso - enviar mensagem formatada
     if (result.message) {
-      await sendWhatsAppText(sendTo, result.message);
+        await polishAndSend(sendTo, result.message);
       sentMessage = result.message;
     }
   } else {
@@ -265,19 +276,19 @@ async function processToolResult(result, toolName, context) {
     if (result.error === "missing_params") {
       // Parâmetros faltando - pedir ao usuário
       sentMessage = result.message || "Preciso de mais algumas informações para continuar.";
-      await sendWhatsAppText(sendTo, sentMessage);
+        await polishAndSend(sendTo, sentMessage);
     } else if (result.error === "no_bank" || result.error === "no_categories") {
       // Erro de configuração do usuário
       sentMessage = result.message;
-      await sendWhatsAppText(sendTo, sentMessage);
+        await polishAndSend(sendTo, sentMessage);
     } else if (result.error === "create_new_request") {
         // Criar uma nova solicitação
         const novo = await executeTool("create_transaction", { tipo: result.tipo, descricao: result.descricao }, context);
         sentMessage = novo.message || result.message;
-        await sendWhatsAppText(sendTo, sentMessage);
+        await polishAndSend(sendTo, sentMessage);
     } else {
       sentMessage = result.message || "Ocorreu um erro ao processar sua solicitação. Tente novamente mais tarde.";
-      await sendWhatsAppText(sendTo, sentMessage);
+      await polishAndSend(sendTo, sentMessage);
     }
   }
   

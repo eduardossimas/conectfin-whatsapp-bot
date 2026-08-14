@@ -86,11 +86,19 @@ export const config = {
   // AI
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GROQ_API_KEY: process.env.GROQ_API_KEY,
   
   // AI Models
   OPENAI_MODEL: "gpt-4.1-mini",
-  GEMINI_PRIMARY: "gemini-2.0-flash-lite",
+  GEMINI_PRIMARY: "gemini-3.1-flash-lite",
   GEMINI_FALLBACK: "gemini-1.5-flash",
+  
+  // Message Polish (Groq para reescrever as mensagens de forma mais natural)
+  GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  MESSAGE_POLISH_ENABLED: process.env.MESSAGE_POLISH_ENABLED !== "false",
+  MESSAGE_POLISH_MIN_LENGTH: Number(process.env.MESSAGE_POLISH_MIN_LENGTH || 40),
+  MESSAGE_POLISH_SPLIT_MIN_LENGTH: Number(process.env.MESSAGE_POLISH_SPLIT_MIN_LENGTH || 400),
+  MESSAGE_POLISH_BLOCK_DELAY_MS: Number(process.env.MESSAGE_POLISH_BLOCK_DELAY_MS || 500),
 };
 
 export { normalizeWhatsAppPhone };

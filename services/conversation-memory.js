@@ -36,11 +36,12 @@ export function addMessage(phone, role, content) {
   }
   
   const conversation = conversations.get(normalizedPhone);
-  
+  const MAX_CONTENT = 300; // Limite de caracteres para log
+  const storedContent = String(content).length > MAX_CONTENT ? String(content).substring(0, MAX_CONTENT) + '...' : content;
   // Adicionar mensagem
   conversation.messages.push({
     role,
-    content,
+    content: storedContent,
     timestamp: Date.now()
   });
   
@@ -52,7 +53,7 @@ export function addMessage(phone, role, content) {
   // Atualizar timestamp de atividade
   conversation.lastActivity = Date.now();
   
-  console.log(`💬 [MEMORY] ${role}: "${content.substring(0, 50)}..." (${conversation.messages.length} msgs)`);
+  console.log(`💬 [MEMORY] ${role}: "${storedContent.substring(0, 50)}..." (${conversation.messages.length} msgs)`);
 }
 
 /**
@@ -88,6 +89,11 @@ export function getConversationHistory(phone) {
     const roleLabel = msg.role === 'user' ? 'Usuário' : 'Assistente';
     return `${roleLabel}: ${msg.content}`;
   }).join('\n');
+
+  const MAX_HISTORY_LENGTH = 2000; // Limite de caracteres para o histórico
+  if (formatted.length > MAX_HISTORY_LENGTH) {
+    return formatted.substring(formatted.length - MAX_HISTORY_LENGTH);
+  }
   
   return formatted;
 }

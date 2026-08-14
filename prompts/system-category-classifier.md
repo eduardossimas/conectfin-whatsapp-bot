@@ -13,6 +13,12 @@ Sua tarefa é analisar uma categoria sugerida e escolher a categoria cadastrada 
 - Financiamentos, prestações
 - Assinaturas e mensalidades
 
+### Receitas (entradas):
+- Serviços prestados, consultorias, honorários
+- Vendas de produtos
+- Investimentos, rendimentos, juros
+- Empréstimos recebidos / aportes
+
 ### Despesas Administrativas (prioridade baixa):
 - Material de escritório
 - Consultorias específicas
@@ -22,6 +28,7 @@ Sua tarefa é analisar uma categoria sugerida e escolher a categoria cadastrada 
 ## IMPORTANTE: 
 - Internet, telefone, energia, água são SEMPRE despesas fixas
 - Priorize categorias mais específicas sobre genéricas
+- **SEMPRE escolha EXATAMENTE um dos nomes listados em `categorias_existentes`.** Nunca invente nomes.
 - "Administrativas" só quando não há categoria mais específica
 
 ## INSTRUÇÃO:

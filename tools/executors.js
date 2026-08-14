@@ -176,16 +176,22 @@ async function actuallyCreateTransaction(params, context) {
   }
   
   // Assistente escolhe melhor categoria
-  let id_categoria = allCategorias[0]?.id;
+  let id_categoria = null;
+  const baseCategoria = params.categoria_sugerida || params.descricao;
   
-  if (params.categoria_sugerida) {
-    const nomeCategoria = await findBestCategory(params.categoria_sugerida, allCategorias);
+  if (baseCategoria) {
+    const nomeCategoria = await findBestCategory(baseCategoria, allCategorias);
     const categoriaEscolhida = allCategorias.find(cat => 
       cat.nome.toLowerCase() === nomeCategoria?.toLowerCase()
     );
     if (categoriaEscolhida) {
       id_categoria = categoriaEscolhida.id;
     }
+  }
+
+  if (!id_categoria) {
+    console.warn(`⚠️ [CREATE-TRANSACTION] Não foi possível sugerir categoria para "${descricao}". Usando primeira categoria disponível.`);
+    id_categoria = allCategorias[0]?.id;
   }
   
   const categoriaUsada = allCategorias.find(c => c.id === id_categoria);
@@ -467,13 +473,11 @@ export async function executePayTransaction(params, context) {
 
 
   // === RAMO DE ESCOLHA (usuário respondeu um número) ===
-  if (params.indice != null) {
-    const candidatos = getPendingChoice(user.id);
-    if (!candidatos) {
-      return { success: false, error: "no_pending_choice",
-        message: "Já não tenho essa lista aqui. Me diga de novo qual conta você pagou." };
-    }
-
+if (params.indice != null) {
+  const candidatos = getPendingChoice(user.id);
+  if (!candidatos) {
+    console.log(`⚠️ [PAY] Lista de escolha inexistente/expirada, tentando matching por descrição`);
+  } else {
     const alvo = candidatos[params.indice - 1];
     if (!alvo) {
       return { success: false, error: "invalid_indice",
@@ -496,6 +500,7 @@ export async function executePayTransaction(params, context) {
         message: `A conta "${alvo.descricao}" já consta como paga no sistema.` };
     }
     return marcarComoPaga(alvo, user.id, data_pagamento);
+  }
 }
   
   // Buscar transação pendente correspondente
@@ -509,7 +514,7 @@ export async function executePayTransaction(params, context) {
     return {
       success: false,
       error: "no_pending",
-      message: "Não há transações pendentes para pagar. Quer que eu crie uma nova transação?"
+      message: "Não há transações pendentes. Quer que eu crie uma nova transação?"
     };
   }
 
@@ -530,7 +535,7 @@ export async function executePayTransaction(params, context) {
     return {
       success: false,
       error: "no_match",
-      message: `Não encontrei nenhuma pendente com "${descricao}".\n\nSuas contas a pagar:\n${lista}\n${criarIndice}. ✨ Criar nova transação "${descricao}"\n\nResponda com o número correspondente.`
+      message: `Não encontrei nenhuma pendente com "${descricao}".\n\nSuas contas a ${tipo === 'receita' ? 'receber' : 'pagar'}:\n${lista}\n${criarIndice}. ✨ Criar nova transação "${descricao}"\n\nResponda com o número correspondente.`
     };
   }
 
@@ -544,7 +549,7 @@ export async function executePayTransaction(params, context) {
       success: false,
       error: "multiple_matches",
       message: `Encontrei mais de uma transação que combina com "${descricao}":\n\n${lista}\n
-      \nQual delas você quer pagar? Responda com o número correspondente (1-${empatados.length})`
+      \nQual delas você quer ${tipo === 'receita' ? 'receber' : 'pagar'}? Responda com o número correspondente (1-${empatados.length})`
     };
   }
 
@@ -566,7 +571,7 @@ export async function executePayTransaction(params, context) {
   const verbo = ehReceita ? 'Recebida' : 'Paga';
   const emoji = ehReceita ? '💚' : '🔴';
 
-  return marcarComoPaga(alvoTransacao, user, data_pagamento);
+  return marcarComoPaga(alvoTransacao, user.id, data_pagamento);
 }
 
 async function marcarComoPaga(transacao, userID, data_pagamento) {
