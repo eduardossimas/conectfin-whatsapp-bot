@@ -40,11 +40,6 @@ export async function handleWhatsAppMessage(message) {
     
     console.log(`📱 [ROUTER] De: ${from}, Tipo: ${type}`);
 
-    if (!isAllowedWhatsAppPhone(from)) {
-      console.log(`🚫 [ROUTER] Número não autorizado, ignorando: ${from}`);
-      return;
-    }
-    
     // ============ 2. BUSCAR USUÁRIO NA API ============
     console.log(`🔍 [ROUTER] Buscando usuário na API: ${from}`);
     const user = await getUserByPhone(from);

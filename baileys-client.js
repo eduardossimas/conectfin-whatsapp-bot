@@ -9,7 +9,7 @@ import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { readdir, unlink, stat, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { isAllowedWhatsAppPhone, getPhoneVariants } from './config/environment.js';
+import { getPhoneVariants } from './config/environment.js';
 import { getUserByPhone } from './services/database-service.js';
 import { sleep } from './utils/helpers.js';
 
@@ -503,12 +503,13 @@ export async function startBaileys() {
         // Ignora mensagens de status (stories)
         if (message.key.remoteJid === 'status@broadcast') continue;
 
-        // Ignora qualquer remetente fora da whitelist
+        // Autorização: todo número passa pela checagem no ConectFin.
+        // Se estiver cadastrado, responde normalmente; se não, ignora silenciosamente.
         const from = formatWhatsAppToE164(message.key.remoteJid);
 
         if(from.startsWith('lid:')) {
           console.log(`⚠️ [BAILEYS] LID não resolvido, permitindo passagem: ${from}`);
-        } else if (!isAllowedWhatsAppPhone(from)) {
+        } else {
           const phoneVariants = getPhoneVariants(from);
           let user = null;
           for(const variant of phoneVariants) {
@@ -520,7 +521,7 @@ export async function startBaileys() {
             }
           }
           if(!user) {
-            console.log(`🚫 [BAILEYS] Mensagem de número não autorizado: ${from}. Ignorando.`);
+            console.log(`🚫 [BAILEYS] Mensagem de número não cadastrado: ${from}. Ignorando.`);
             continue;
           }
           console.log(`✅ [BAILEYS] Mensagem de número autorizado: ${from}, via Banco de Dados.`);
