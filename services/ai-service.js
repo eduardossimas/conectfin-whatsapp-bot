@@ -20,7 +20,8 @@ const openai = config.OPENAI_API_KEY
   ? new OpenAI({ apiKey: config.OPENAI_API_KEY })
   : null;
 
-const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
+const geminiCredentialError = getGeminiCredentialError(config.GEMINI_API_KEY);
+const genAI = geminiCredentialError ? null : new GoogleGenerativeAI(config.GEMINI_API_KEY);
 
 //Cliente Groq gratuito - reutiliza o SDK OpenAi via endpoint compatível
 const groqClient = config.GROQ_API_KEY
@@ -44,6 +45,18 @@ export const PROMPTS = {
   POLISHER: loadPrompt("system-message-polisher.md")
 };
 const VALID_TOOLS = Object.keys(TOOLS);
+
+function getGeminiCredentialError(apiKey) {
+  if (!apiKey) {
+    return "GEMINI_API_KEY não configurada. Defina uma chave de API do Google AI Studio.";
+  }
+
+  if (/^(AQ\.|ya29\.)/.test(apiKey.trim())) {
+    return "GEMINI_API_KEY contém um token OAuth, não uma chave de API. Gere uma chave no Google AI Studio.";
+  }
+
+  return null;
+}
 
 // ========================= SCHEMAS PARA STRUCTURED OUTPUT ========================
 
@@ -87,7 +100,7 @@ export const SCHEMAS = {
     properties: {
       action: { type: SchemaType.STRING, enum: ["call_tool", "respond", "ask_user"] },
       tool: { type: SchemaType.STRING, nullable: true, 
-        enum: ["create_transaction", "get_payables", "get_receivables", "get_cashflow", "list_transactions", "analyze_cashflow", "pay_transaction"]},
+        enum: ["create_transaction", "get_payables", "get_receivables", "get_cashflow", "get_dre", "list_transactions", "analyze_cashflow", "pay_transaction"]},
       parameters_json: { type: SchemaType.STRING, nullable: true, description: "Parâmetros da tool em formato JSON string" },
       message: { type: SchemaType.STRING, nullable: true },
       message_to_user: { type: SchemaType.STRING, nullable: true }
@@ -310,6 +323,10 @@ async function runLLMGemini(system, userParts, options = {}, retryCount = 0) {
   console.log(`🤖 [AI] Tentativa Gemini ${retryCount + 1}/${maxRetries + 1} - Modelo: ${modelToUse}`);
   
   try {
+    if (geminiCredentialError) {
+      throw new Error(geminiCredentialError);
+    }
+
     // Configurar modelo com ou sem structured output
     const modelConfig = {
       model: modelToUse,

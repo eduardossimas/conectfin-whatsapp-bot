@@ -222,7 +222,7 @@ class DatabaseService {
 
     } catch (error) {
       console.error('[DB] ❌ Erro ao buscar por categoria:', error.message);
-      return [];
+      throw error;
     }
   }
 

@@ -8,7 +8,7 @@
 import { runAgent } from "../services/ai-service.js";
 import { getUserByPhone } from "../services/database-service.js";
 import { sendWhatsAppText, formatErrorMessage } from "../services/whatsapp-service-unified.js";
-import { executeTool } from "../tools/index.js";
+import { TOOLS, executeTool } from "../tools/index.js";
 import { sleep } from "../utils/helpers.js";
 import { config, isAllowedWhatsAppPhone, getPhoneVariants } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
@@ -171,7 +171,7 @@ export async function handleWhatsAppMessageAgent(message) {
 }
 
 // Lista de tools válidas para detecção automática
-const VALID_TOOLS = ['create_transaction', 'get_payables', 'get_receivables', 'get_cashflow', 'analyze_cashflow', 'list_transactions', 'pay_transaction'];
+const VALID_TOOLS = Object.keys(TOOLS);
 
 /**
  * Processa a resposta do agente e executa a ação apropriada
@@ -211,7 +211,7 @@ async function processAgentResponse(agentResponse, context) {
       // Guarda: se a tool for inválida, responde de forma amigável
       if (!tool || !VALID_TOOLS.includes(tool)) {
         console.warn(`⚠️ [AGENT-ROUTER] Tool inválida ou não especificada: ${tool}`);
-        sentMessage = "Desculpe, não consegui processar sua solicitação. Posso registrar lançamentos, ver contas a pagar/receber ou gerar seu fluxo de caixa.";
+        sentMessage = "Desculpe, não consegui processar sua solicitação. Posso registrar lançamentos, ver contas a pagar/receber, gerar fluxo de caixa ou mostrar a DRE.";
         await polishAndSend(sendTo, sentMessage);
         break;
       }
