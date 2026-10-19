@@ -32,7 +32,7 @@ export function getPhoneVariants(phone = "") {
   return Array.from(variants);
 }
 
-const envAllowedWhatsApp = process.env.ALLOWED_WHATSAPP || "+5532991473412";
+const envAllowedWhatsApp = process.env.ALLOWED_WHATSAPP || "+5532987229630";
 const normalizedAllowedWhatsAppList = envAllowedWhatsApp
   .split(",")
   .map((phone) => normalizeWhatsAppPhone(phone))
@@ -40,7 +40,7 @@ const normalizedAllowedWhatsAppList = envAllowedWhatsApp
 
 const allowedWhatsAppList = normalizedAllowedWhatsAppList.length
   ? normalizedAllowedWhatsAppList
-  : ["+5532991473412"];
+  : ["+5532987229630"];
 
 export const config = {
   // Server

@@ -52,6 +52,18 @@ export const TOOLS = {
       end_date: { type: "date", format: "YYYY-MM-DD" }
     }
   },
+
+  get_dre: {
+    name: "get_dre",
+    description: "Gera a Demonstração do Resultado do Exercício mensal, agrupando receitas e despesas por categoria",
+    required_params: [],
+    optional_params: ["periodo", "start_date", "end_date"],
+    param_types: {
+      periodo: { type: "string", description: "Mês do relatório (ex: 'janeiro 2026', 'este mês')" },
+      start_date: { type: "date", format: "YYYY-MM-DD" },
+      end_date: { type: "date", format: "YYYY-MM-DD" }
+    }
+  },
   
   list_transactions: {
     name: "list_transactions",

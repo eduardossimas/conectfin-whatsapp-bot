@@ -392,6 +392,16 @@ O bot mostra logs detalhados:
 3. Tente novamente
 4. Se persistir, troque de GEMINI_PRIMARY para GEMINI_FALLBACK no código
 
+### Erro de IA "401 Unauthorized" ou "ACCESS_TOKEN_TYPE_UNSUPPORTED":
+
+`GEMINI_API_KEY` precisa ser uma chave de API do Google AI Studio. Não use token OAuth, access token, chave de serviço ou credencial do Google Cloud nessa variável.
+
+1. Gere uma chave em <https://aistudio.google.com/apikey>
+2. Atualize `GEMINI_API_KEY` no arquivo `.env`
+3. Reinicie o bot após alterar o `.env`
+
+Se a chave tiver sido exposta em logs, commits ou mensagens, revogue-a e gere outra antes de continuar.
+
 ### Datas erradas (um dia a menos):
 
 ✅ **Corrigido!** Sistema agora usa timezone `America/Sao_Paulo` corretamente.

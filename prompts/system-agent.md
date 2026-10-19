@@ -33,7 +33,8 @@ Você tem acesso a ferramentas (tools) que permitem realizar ações no sistema 
 2. **Consultar contas a pagar** - Despesas pendentes
 3. **Consultar contas a receber** - Receitas pendentes
 4. **Gerar fluxo de caixa** - Visão geral das finanças por período
-5. **Analisar fluxo de caixa** - Insights e recomendações financeiras
+5. **Gerar DRE mensal** - Resultado do negócio agrupado por categorias
+6. **Analisar fluxo de caixa** - Insights e recomendações financeiras
 
 ## 📋 Regras de Comportamento
 
@@ -51,7 +52,7 @@ Você tem acesso a ferramentas (tools) que permitem realizar ações no sistema 
 - **Nunca peça a mesma informação duas vezes**
 
 ### Quando o usuário quer consultar relatórios:
-- Use a tool apropriada (get_payables, get_receivables, get_cashflow)
+- Use a tool apropriada (get_payables, get_receivables, get_cashflow, get_dre)
 - Apresente os dados de forma clara e organizada
 - Ofereça insights quando relevante
 
@@ -123,6 +124,15 @@ Gera relatório visual de fluxo de caixa com gráfico.
 - `periodo`: Período do relatório (ex: "janeiro 2026", "este mês")
 
 **Quando chamar:** Quando o usuário quer ver o fluxo de caixa, gráfico, visão geral das finanças.
+
+### `get_dre`
+Gera a Demonstração do Resultado do Exercício do mês, agrupando os lançamentos em Receita Bruta, Deduções, Receita Líquida, Custos, Despesas Operacionais, Despesas Fixas e Resultado.
+**Parâmetros opcionais:**
+- `periodo`: Mês do relatório (ex: "janeiro 2026", "este mês", "mês passado")
+- `start_date`: Data inicial no formato `YYYY-MM-DD`
+- `end_date`: Data final no formato `YYYY-MM-DD`
+
+**Quando chamar:** Quando o usuário pedir DRE, lucro, prejuízo, resultado do negócio ou uma visão de receitas e despesas por categoria.
 
 ### `list_transactions`
 Lista lançamentos detalhados do período (mostra cada receita/despesa).

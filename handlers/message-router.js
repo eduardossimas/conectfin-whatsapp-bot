@@ -14,6 +14,7 @@ import { handleGreeting } from "./greeting-handler.js";
 import { handleCreateTransaction } from "./transaction-handler.js";
 import { handleViewPayables, handleViewReceivables } from "./reports-handler.js";
 import { handleCashFlowReport } from "./cashflow-handler.js";
+import { executeGetDRE } from "../tools/executors.js";
 
 /**
  * Handler principal de mensagens do WhatsApp
@@ -92,11 +93,14 @@ export async function handleWhatsAppMessage(message) {
         break;
         
       case 'view_dre':
-        // TODO: Implementar handler de DRE
-        await sendWhatsAppText(
-          from,
-          "📈 *DRE (Demonstração do Resultado)*\n\nEsta funcionalidade será implementada em breve! 🚧\n\nPor enquanto, você pode:\n• Criar lançamentos\n• Ver contas a pagar/receber"
-        );
+        console.log('📊 [ROUTER] Roteando para relatório DRE');
+        {
+          const dreResult = await executeGetDRE(
+            { periodo: intentData.original_message || text },
+            { user, from }
+          );
+          await sendWhatsAppText(from, dreResult.message);
+        }
         break;
         
       case 'unknown':

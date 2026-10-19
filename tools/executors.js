@@ -68,6 +68,7 @@ export async function executeTool(toolName, params, context) {
     get_payables: executeGetPayables,
     get_receivables: executeGetReceivables,
     get_cashflow: executeGetCashflow,
+    get_dre: executeGetDRE,
     list_transactions: executeListTransactions,
     analyze_cashflow: executeAnalyzeCashflow,
     pay_transaction: executePayTransaction,
@@ -368,7 +369,7 @@ async function executeGetCashflow(params, context) {
       mesFim = periodoExtraido.mesFim;
     }
   }
-  
+
   if (params.start_date) mesInicio = dayjs(params.start_date).startOf("day");
   if (params.end_date) mesFim = dayjs(params.end_date).endOf("day");
   
@@ -461,6 +462,116 @@ _Gráfico gerado em ${dayjs().tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm')
     },
     message: null // Não enviar mensagem de texto, já enviou imagem
   };
+}
+
+/**
+ * Gera a Demonstração do Resultado do Exercício agrupada por categoria.
+ */
+export async function executeGetDRE(params = {}, context) {
+  const { user } = context;
+  const periodo = obterPeriodoRelatorio(params);
+  const periodoLabel = periodo.mesInicio.format("MMMM/YYYY");
+  const filters = {
+    startDate: periodo.mesInicio.format("YYYY-MM-DD"),
+    endDate: periodo.mesFim.format("YYYY-MM-DD")
+  };
+
+  const [receitasPorCategoria, despesasPorCategoria] = await Promise.all([
+    dbService.getTransactionsByCategory(user.id, { ...filters, type: "receita" }),
+    dbService.getTransactionsByCategory(user.id, { ...filters, type: "despesa" })
+  ]);
+
+  const receitas = normalizarCategorias(receitasPorCategoria);
+  const despesas = normalizarCategorias(despesasPorCategoria);
+  const receitaBruta = somarCategorias(receitas, "receita_bruta");
+  const deducoes = somarCategorias([...receitas, ...despesas], "deducoes");
+  const custos = somarCategorias(despesas, "custos");
+  const despesasOperacionais = somarCategorias(despesas, "despesas_operacionais");
+  const despesasFixas = somarCategorias(despesas, "despesas_fixas");
+  const receitaLiquida = receitaBruta - deducoes;
+  const resultado = receitaLiquida - custos - despesasOperacionais - despesasFixas;
+
+  const message = `📊 *DRE - ${periodoLabel}*
+
+💰 *Receita Bruta:* ${formatCurrency(receitaBruta)}
+├─ (-) Deduções: ${formatCurrency(deducoes)}
+└─ (=) *Receita Líquida:* ${formatCurrency(receitaLiquida)}
+
+📉 (-) Custos: ${formatCurrency(custos)}
+📋 (-) Despesas Operacionais: ${formatCurrency(despesasOperacionais)}
+🏢 (-) Despesas Fixas: ${formatCurrency(despesasFixas)}
+
+${resultado >= 0 ? "✅" : "❌"} (=) *Resultado:* ${formatCurrency(Math.abs(resultado))}${resultado < 0 ? " (prejuízo)" : " (lucro)"}`;
+
+  return {
+    success: true,
+    data: {
+      periodo: periodoLabel,
+      receitaBruta,
+      deducoes,
+      receitaLiquida,
+      custos,
+      despesasOperacionais,
+      despesasFixas,
+      resultado
+    },
+    message
+  };
+}
+
+function obterPeriodoRelatorio(params) {
+  const hoje = dayjs.tz(dayjs(), "America/Sao_Paulo");
+  let mesInicio = hoje.startOf("month");
+  let mesFim = hoje.endOf("month");
+
+  if (params.periodo) {
+    const periodoExtraido = extrairPeriodoDaMensagem(params.periodo);
+    if (periodoExtraido) {
+      mesInicio = periodoExtraido.mesInicio;
+      mesFim = periodoExtraido.mesFim;
+    }
+  }
+
+  if (params.start_date) mesInicio = dayjs(params.start_date).startOf("day");
+  if (params.end_date) mesFim = dayjs(params.end_date).endOf("day");
+  return { mesInicio, mesFim };
+}
+
+function normalizarCategorias(resultado) {
+  const itens = Array.isArray(resultado)
+    ? resultado
+    : resultado?.data || resultado?.categories || resultado?.categorias || [];
+
+  return Array.isArray(itens) ? itens.map(item => ({
+    nome: String(item.nome || item.categoria || item.category || item.category_name || item.name || "Sem categoria"),
+    grupo: String(item.categoria_principal || item.grupo || item.group || item.tipo || "").toLowerCase(),
+    tipo: String(item.tipo_lancamento || item.tipo || item.type || "").toLowerCase(),
+    valor: Number(item.total ?? item.valor ?? item.amount ?? item.sum ?? item.total_value ?? 0)
+  })) : [];
+}
+
+function somarCategorias(categorias, grupo) {
+  return categorias
+    .filter(categoria => classificarGrupoDRE(categoria) === grupo)
+    .reduce((total, categoria) => total + categoria.valor, 0);
+}
+
+function classificarGrupoDRE(categoria) {
+  const texto = `${categoria.grupo} ${categoria.nome}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+  if (texto.includes("deduc") || texto.includes("devolu") || texto.includes("abatimento") || texto.includes("imposto sobre venda")) {
+    return "deducoes";
+  }
+  if (texto.includes("custo") || texto.includes("materia-prima") || texto.includes("materia prima") || texto.includes("cpv") || texto.includes("csp")) {
+    return "custos";
+  }
+  if (texto.includes("fixa")) {
+    return "despesas_fixas";
+  }
+  if (categoria.grupo.includes("receita") || categoria.grupo.includes("income") || categoria.tipo === "receita" || categoria.tipo === "income") {
+    return "receita_bruta";
+  }
+  return "despesas_operacionais";
 }
 
 export async function executePayTransaction(params, context) {
