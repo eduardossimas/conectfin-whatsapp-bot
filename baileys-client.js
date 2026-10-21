@@ -9,8 +9,6 @@ import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { readdir, unlink, stat, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { getPhoneVariants } from './config/environment.js';
-import { getUserByPhone } from './services/database-service.js';
 import { sleep } from './utils/helpers.js';
 
 // ======================= CONFIGURAÇÃO =======================
@@ -503,28 +501,11 @@ export async function startBaileys() {
         // Ignora mensagens de status (stories)
         if (message.key.remoteJid === 'status@broadcast') continue;
 
-        // Autorização: todo número passa pela checagem no ConectFin.
-        // Se estiver cadastrado, responde normalmente; se não, ignora silenciosamente.
+        // O agent-router faz a checagem de cadastro e orienta o usuário quando necessário.
         const from = formatWhatsAppToE164(message.key.remoteJid);
 
         if(from.startsWith('lid:')) {
-          console.log(`⚠️ [BAILEYS] LID não resolvido, permitindo passagem: ${from}`);
-        } else {
-          const phoneVariants = getPhoneVariants(from);
-          let user = null;
-          for(const variant of phoneVariants) {
-            console.log(`🔍 [BAILEYS] Verificando número no banco de dados: ${variant}`);
-            user = await getUserByPhone(variant);
-            if(user){
-              console.log(`✅ [BAILEYS] Número autorizado via banco de dados: ${variant}`);
-              break;
-            }
-          }
-          if(!user) {
-            console.log(`🚫 [BAILEYS] Mensagem de número não cadastrado: ${from}. Ignorando.`);
-            continue;
-          }
-          console.log(`✅ [BAILEYS] Mensagem de número autorizado: ${from}, via Banco de Dados.`);
+          console.log(`⚠️ [BAILEYS] LID não resolvido, encaminhando ao agente: ${from}`);
         }
         
         console.log('\n📨 [BAILEYS] Nova mensagem recebida!');

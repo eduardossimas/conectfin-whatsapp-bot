@@ -15,6 +15,11 @@ import BaileysClient from '../baileys-client.js';
 import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
 import { polishAndSend } from "../services/message-polish-service.js";
 
+const UNREGISTERED_USER_MESSAGE =
+  "Bem-vindo ao ConectFin! 👋\n\n" +
+  "Se você já é nosso cliente, cadastre seu número no sistema para que eu possa " +
+  "dar respostas precisas com base nas suas informações.";
+
 /**
  * Handler principal de mensagens - Sistema de Agente com Tools
  * 
@@ -43,8 +48,24 @@ export async function handleWhatsAppMessageAgent(message) {
     
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
 
+    if (from.startsWith('lid:')) {
+      console.log(`⚠️ [AGENT-ROUTER] LID não resolvido, solicitando identificação do usuário: ${from}`);
+      const lid = from.replace('lid:', '');
+      const lidJid = `${lid}@lid`;
 
-    
+      await sendWhatsAppText(
+        lidJid,
+        "Olá! 👋\n\nPara usar o ConectFin, preciso primeiro identificar sua conta.\n\n📧 Por favor, informe o **email** que você cadastrou no ConectFin."
+      );
+
+      addMessage(
+        from,
+        'user',
+        `[SISTEMA] LID não resolvido: ${lid}. Solicitação de email enviada para ${lidJid}`
+      );
+      return;
+    }
+
     // ============ 2. BUSCAR USUÁRIO NA API ============
     console.log(`🔍 [AGENT-ROUTER] Buscando usuário na API: ${from}`);
     const phoneVariants = getPhoneVariants(from);
@@ -59,29 +80,8 @@ export async function handleWhatsAppMessageAgent(message) {
     }
 
     if(!user) {
-      console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Ignorando mensagem.`);
-      return;
-    }
-    if(from.startsWith('lid:')) {
-      console.log(`⚠️ [AGENT-ROUTER] LID não resolvido, solicitando identificação do usuário: ${from}`);
-      const lid = from.replace('lid:', '');
-      const lidJid = `${lid}@lid`;
-
-    await sendWhatsAppText(lidJid,
-    "Olá! 👋\n\nPara usar o ConectFin, preciso primeiro identificar sua conta.\n\n📧 Por favor, informe o **email** que você cadastrou no ConectFin."
-    );
-
-      // Guarda na memória que este LID está aguardando identificação
-    addMessage(from, 'user',
-    `[SISTEMA] LID não resolvido: ${lid}. Solicitação de email enviada para ${lidJid}`
-    );
-    return;
-  }
-
-    user = await getUserByPhone(from);
-    
-    if (!user) {
-      console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Ignorando mensagem.`);
+      console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Enviando orientação de cadastro.`);
+      await sendWhatsAppText(originalJid || from, UNREGISTERED_USER_MESSAGE);
       return;
     }
 
