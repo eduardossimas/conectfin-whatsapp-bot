@@ -42,6 +42,10 @@ const allowedWhatsAppList = normalizedAllowedWhatsAppList.length
   ? normalizedAllowedWhatsAppList
   : ["+5532987229630"];
 
+const supportContact = normalizeWhatsAppPhone(
+  process.env["support-contact"] || process.env.SUPPORT_CONTACT
+);
+
 export const config = {
   // Server
   PORT: Number(process.env.PORT || 3001),
@@ -52,6 +56,7 @@ export const config = {
   // WhatsApp (legacy)
   ALLOWED_WHATSAPP: allowedWhatsAppList[0],
   ALLOWED_WHATSAPP_LIST: allowedWhatsAppList,
+  SUPPORT_CONTACT: supportContact,
   WAHA_URL: process.env.WAHA_URL,
   WA_CLOUD_PHONE_ID: process.env.WA_CLOUD_PHONE_ID,
   WA_CLOUD_TOKEN: process.env.WA_CLOUD_TOKEN,

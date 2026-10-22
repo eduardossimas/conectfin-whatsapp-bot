@@ -176,6 +176,11 @@ O usuário deve:
 2. Ter vinculado o número do WhatsApp no perfil (formato E.164: `+5532991473412`)
 3. Ter configurado as credenciais (email/senha) no `.env` do bot
 
+Contatos que não possuem cadastro recebem a orientação de cadastro uma única vez por
+execução do bot. As mensagens seguintes são ignoradas para evitar poluir a conversa.
+Na primeira mensagem, o bot também avisa o contato definido em `support-contact` sobre
+a conversa pendente, incluindo o nome do contato quando o WhatsApp o disponibilizar.
+
 ### 3. Bancos e Categorias
 
 - Cadastre pelo menos **1 banco** no ConectFin
