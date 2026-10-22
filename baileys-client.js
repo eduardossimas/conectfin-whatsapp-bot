@@ -578,12 +578,18 @@ export async function sendText(to, text) {
   const jid = to.includes('@') ? to : formatPhoneToWhatsApp(to);
   
   console.log(`📤 [BAILEYS] Enviando mensagem para ${jid}`);
+  const [contact] = await sock.onWhatsApp(jid);
+  if (!contact?.exists) {
+    throw new Error(`O número ${to} não está registrado no WhatsApp.`);
+  }
+
+  const resolvedJid = contact.jid || jid;
   try { await sock.sendPresenceUpdate('composing', jid); } catch(e) {}
   await sleep(500);   
   try { await sock.sendPresenceUpdate('paused', jid); } catch(e) {}
   await sleep(200);
 
-  await sock.sendMessage(jid, { text });
+  await sock.sendMessage(resolvedJid, { text });
   
   console.log('✅ [BAILEYS] Mensagem enviada!');
 }
@@ -632,6 +638,7 @@ export async function parseMessage(message) {
   const result = {
     from,
     originalJid: message.key.remoteJid,
+    contactName: message.pushName || message.key.pushName || "",
     type,
     text,
     caption: '',

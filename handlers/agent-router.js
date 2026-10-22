@@ -20,6 +20,11 @@ const UNREGISTERED_USER_MESSAGE =
   "Se você já é nosso cliente, cadastre seu número no sistema para que eu possa " +
   "dar respostas precisas com base nas suas informações.";
 
+// Mantém os contatos não cadastrados já notificados durante a execução do bot.
+const notifiedUnregisteredContacts = new Set();
+const notifiedSupportContacts = new Set();
+const notifyingSupportContacts = new Set();
+
 /**
  * Handler principal de mensagens - Sistema de Agente com Tools
  * 
@@ -44,7 +49,7 @@ export async function handleWhatsAppMessageAgent(message) {
     
     from = parsed.from;
     originalJid = parsed.originalJid;
-    const { type, text, caption, media } = parsed;
+    const { type, text, caption, media, contactName } = parsed;
     
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
 
@@ -80,8 +85,56 @@ export async function handleWhatsAppMessageAgent(message) {
     }
 
     if(!user) {
+      const contactId = originalJid || from;
+
+      if (
+        notifiedUnregisteredContacts.has(contactId) &&
+        (!config.SUPPORT_CONTACT || notifiedSupportContacts.has(contactId))
+      ) {
+        console.log(`🔇 [AGENT-ROUTER] Contato não cadastrado já notificado: ${contactId}. Ignorando mensagem.`);
+        return;
+      }
+
+      // Reserva o contato antes dos envios para evitar alertas duplicados concorrentes.
+      const shouldNotifyContact = !notifiedUnregisteredContacts.has(contactId);
+      notifiedUnregisteredContacts.add(contactId);
       console.log(`⚠️ [AGENT-ROUTER] Usuário não encontrado: ${from}. Enviando orientação de cadastro.`);
-      await sendWhatsAppText(originalJid || from, UNREGISTERED_USER_MESSAGE);
+
+      if (
+        config.SUPPORT_CONTACT &&
+        !notifiedSupportContacts.has(contactId) &&
+        !notifyingSupportContacts.has(contactId)
+      ) {
+        notifyingSupportContacts.add(contactId);
+        const contactDescription = contactName
+          ? `Nome: ${contactName}\nNúmero: ${from}`
+          : `Número: ${from}`;
+        const supportMessage =
+          "⚠️ Conversa pendente de análise no WhatsApp do bot.\n\n" +
+          `${contactDescription}`;
+
+        try {
+          await sendWhatsAppText(config.SUPPORT_CONTACT, supportMessage);
+          notifiedSupportContacts.add(contactId);
+          notifyingSupportContacts.delete(contactId);
+          console.log(`✅ [AGENT-ROUTER] Suporte notificado: ${config.SUPPORT_CONTACT}`);
+        } catch (error) {
+          notifyingSupportContacts.delete(contactId);
+          console.error(
+            `❌ [AGENT-ROUTER] Falha ao notificar suporte ${config.SUPPORT_CONTACT}:`,
+            error.message
+          );
+        }
+      } else {
+        console.error("❌ [AGENT-ROUTER] SUPPORT_CONTACT não configurado.");
+      }
+
+      if (!config.SUPPORT_CONTACT) {
+        console.error("❌ [AGENT-ROUTER] Alerta não enviado porque SUPPORT_CONTACT está vazio.");
+      }
+      if (shouldNotifyContact) {
+        await sendWhatsAppText(contactId, UNREGISTERED_USER_MESSAGE);
+      }
       return;
     }
 
