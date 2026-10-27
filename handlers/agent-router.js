@@ -14,6 +14,16 @@ import { config, isAllowedWhatsAppPhone, getPhoneVariants } from "../config/envi
 import BaileysClient from '../baileys-client.js';
 import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
 import { polishAndSend } from "../services/message-polish-service.js";
+import {
+  endSupport,
+  getSupportCustomerFromMessage,
+  getCustomerState,
+  isWaitingForSupport,
+  markChoicePending,
+  shouldAskDailyChoice,
+  startAssistant,
+  startSupport,
+} from "../services/support-state.js";
 
 const UNREGISTERED_USER_MESSAGE =
   "Bem-vindo ao ConectFin! 👋\n\n" +
@@ -24,6 +34,77 @@ const UNREGISTERED_USER_MESSAGE =
 const notifiedUnregisteredContacts = new Set();
 const notifiedSupportContacts = new Set();
 const notifyingSupportContacts = new Set();
+const DAILY_CHOICE_MESSAGE =
+  "Olá! 👋\n\n" +
+  "Como você gostaria de ser atendido hoje?\n\n" +
+  "1️⃣ Falar com o suporte\n" +
+  "2️⃣ Usar o assistente para lançamentos ou relatórios\n\n" +
+  "Responda *suporte* ou *assistente*.";
+
+function isSupportChoice(text = "") {
+  return /\b(suporte|atendimento humano|falar com uma pessoa)\b/i.test(text);
+}
+
+function isAssistantChoice(text = "") {
+  return /\b(assistente|lançamento|lancamento|relatório|relatorio)\b/i.test(text);
+}
+
+function getSupportRequestMessage(user, from) {
+  return (
+    "📞 *Novo atendimento aguardando suporte*\n\n" +
+    `Cliente: ${user.nome || "Não informado"}\n` +
+    `Número: ${from}\n\n` +
+    "Para liberar o assistente após o atendimento, envie:\n" +
+    `Encerrar atendimento '${from}'`
+  );
+}
+
+function isSupportContact(phone) {
+  return Boolean(
+    config.SUPPORT_CONTACT &&
+      getPhoneVariants(phone).some((candidate) =>
+        getPhoneVariants(config.SUPPORT_CONTACT).includes(candidate)
+      )
+  );
+}
+
+async function startCustomerSupport(from, originalJid, user) {
+  if (!config.SUPPORT_CONTACT) {
+    console.error("❌ [AGENT-ROUTER] SUPPORT_CONTACT não configurado.");
+    await sendWhatsAppText(
+      originalJid || from,
+      "No momento, o contato do suporte não está configurado. " +
+      "Por favor, tente novamente mais tarde."
+    );
+    return;
+  }
+
+  startSupport(from);
+  await sendWhatsAppText(
+    originalJid || from,
+    "✅ Entendido. Encaminhei sua solicitação para o suporte. Aguarde o retorno por aqui."
+  );
+  await sendWhatsAppText(
+    config.SUPPORT_CONTACT,
+    getSupportRequestMessage(user, from)
+  );
+}
+
+async function handleSupportCommand(from, text) {
+  if (!isSupportContact(from)) return false;
+
+  const customerPhone = getSupportCustomerFromMessage(text);
+  if (!customerPhone) return false;
+
+  endSupport(customerPhone);
+  await sendWhatsAppText(
+    customerPhone,
+    "✅ Seu atendimento com o suporte foi encerrado.\n\n" +
+      "Agora posso ajudar com lançamentos e relatórios. Envie sua solicitação quando quiser."
+  );
+  console.log(`✅ [AGENT-ROUTER] Atendimento encerrado pelo suporte: ${customerPhone}`);
+  return true;
+}
 
 /**
  * Handler principal de mensagens - Sistema de Agente com Tools
@@ -50,8 +131,13 @@ export async function handleWhatsAppMessageAgent(message) {
     from = parsed.from;
     originalJid = parsed.originalJid;
     const { type, text, caption, media, contactName } = parsed;
-    
+    const incomingText = text || caption || "";
+
     console.log(`📱 [AGENT-ROUTER] De: ${from}, Tipo: ${type}`);
+
+    if (await handleSupportCommand(from, incomingText)) {
+      return;
+    }
 
     if (from.startsWith('lid:')) {
       console.log(`⚠️ [AGENT-ROUTER] LID não resolvido, solicitando identificação do usuário: ${from}`);
@@ -140,8 +226,48 @@ export async function handleWhatsAppMessageAgent(message) {
 
     console.log(`✅ [AGENT-ROUTER] Usuário: ${user.nome || 'N/A'} (ID: ${user.id})`);
 
+    // O suporte assume a conversa até enviar o comando de encerramento.
+    if (isWaitingForSupport(from)) {
+      console.log(`🔇 [AGENT-ROUTER] Cliente em atendimento com suporte: ${from}`);
+      return;
+    }
+
+    // O pedido de suporte tem prioridade sobre a escolha diária e sobre a IA.
+    if (isSupportChoice(incomingText)) {
+      await startCustomerSupport(from, originalJid, user);
+      return;
+    }
+
+    // Exibe a escolha apenas na primeira mensagem do cliente em cada dia.
+    if (shouldAskDailyChoice(from)) {
+      markChoicePending(from);
+      await sendWhatsAppText(
+        originalJid || from,
+        DAILY_CHOICE_MESSAGE
+      );
+      return;
+    }
+
+    const customerState = getCustomerState(from);
+    if (customerState?.status === "awaiting_choice") {
+      if (isSupportChoice(incomingText)) {
+        await startCustomerSupport(from, originalJid, user);
+        return;
+      }
+
+      if (isAssistantChoice(incomingText)) {
+        startAssistant(from);
+      } else {
+        await sendWhatsAppText(
+          originalJid || from,
+          "Por favor, responda *suporte* para falar com uma pessoa ou *assistente* para lançamentos e relatórios."
+        );
+        return;
+      }
+    }
+
     // ============ 3. PREPARAR MENSAGEM DO USUÁRIO ============
-    let userMessage = text || caption || "";
+    let userMessage = incomingText;
     let mediaParts = [];
     
     // Se for mídia, preparar para o LLM

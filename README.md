@@ -169,7 +169,31 @@ Edite `config/environment.js` e defina o número autorizado:
 ALLOWED_WHATSAPP: "+5532991473412", // Seu número aqui
 ```
 
-### 2. Usuário no Sistema
+### 2. Atendimento pelo suporte
+
+Configure no `.env` o número que deve receber os pedidos de atendimento:
+
+```env
+SUPPORT_CONTACT=+5532991473412
+```
+
+Na primeira mensagem de cada cliente cadastrado a cada dia, o bot pergunta se
+ele deseja falar com o suporte ou usar o assistente para lançamentos e
+relatórios. Ao escolher o suporte, ou sempre que o cliente solicitar falar
+com o suporte, as mensagens do cliente ficam pausadas e o bot envia uma
+pendência para `SUPPORT_CONTACT`.
+
+Depois de concluir o atendimento, o suporte deve enviar ao bot, a partir do
+número configurado, uma mensagem no formato:
+
+```text
+Encerrar atendimento '+5511999999999'
+```
+
+O cliente recebe a confirmação e volta a poder usar o assistente. O estado é
+mantido enquanto o processo do bot estiver em execução.
+
+### 3. Usuário no Sistema
 
 O usuário deve:
 1. Estar cadastrado no sistema ConectFin
@@ -181,7 +205,7 @@ execução do bot. As mensagens seguintes são ignoradas para evitar poluir a co
 Na primeira mensagem, o bot também avisa o contato definido em `support-contact` sobre
 a conversa pendente, incluindo o nome do contato quando o WhatsApp o disponibilizar.
 
-### 3. Bancos e Categorias
+### 4. Bancos e Categorias
 
 - Cadastre pelo menos **1 banco** no ConectFin
 - Defina um como **principal** (opcional)
