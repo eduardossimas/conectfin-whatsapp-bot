@@ -169,7 +169,21 @@ Edite `config/environment.js` e defina o número autorizado:
 ALLOWED_WHATSAPP: "+5532991473412", // Seu número aqui
 ```
 
-### 2. Atendimento pelo suporte
+### 2. Lembretes de contas a pagar
+
+O bot consulta diariamente as contas vencidas ou com vencimento nos próximos três dias.
+Configure o horário no `.env` (formato `HH:mm`, no fuso de São Paulo por padrão):
+
+```env
+PAYMENT_REMINDER_TIME=09:00
+PAYMENT_REMINDER_TIMEZONE=America/Sao_Paulo
+PAYMENT_REMINDER_RECIPIENTS=
+```
+
+Com essa configuração vazia, o bot busca os usuários com telefone cadastrados na API.
+Para um teste restrito, informe um ou mais números separados por vírgula.
+
+### 3. Atendimento pelo suporte
 
 Configure no `.env` o número que deve receber os pedidos de atendimento:
 

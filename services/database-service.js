@@ -1,4 +1,5 @@
 import { apiClient } from './api-client.js';
+import { normalizeWhatsAppPhone } from "../config/environment.js";
 
 /**
  * DatabaseService - Serviço para interagir com a API ConectFin
@@ -279,6 +280,14 @@ export default dbService;
 export async function getUserByPhone(phone) {
   const userData = await dbService.getUserIdByPhone(phone);
   return userData; // Retorna objeto completo agora
+}
+
+export async function getUsersWithPhone() {
+  const response = await apiClient.getAllUsers();
+  const phones = (response?.users || response || [])
+    .map((user) => normalizeWhatsAppPhone(user?.phone_e164))
+    .filter(Boolean);
+  return [...new Set(phones)];
 }
 
 export async function getBancoIdPadrao(userId) {

@@ -8,6 +8,7 @@
 // Armazenamento em memória das conversas
 // Map<phoneNumber, { messages: Array, lastActivity: timestamp }>
 const conversations = new Map();
+const paymentReminderDates = new Map();
 
 // Configurações
 const CONFIG = {
@@ -124,6 +125,20 @@ export function clearConversation(phone) {
   console.log(`🧹 [MEMORY] Conversa limpa para ${normalizedPhone}`);
 }
 
+export function hasPaymentReminderBeenSent(phone, date = todayKey()) {
+  const key = normalizePhone(phone);
+  const sentDate = paymentReminderDates.get(key);
+  if (sentDate && sentDate !== date) {
+    paymentReminderDates.delete(key);
+    return false;
+  }
+  return sentDate === date;
+}
+
+export function markPaymentReminderSent(phone, date = todayKey()) {
+  paymentReminderDates.set(normalizePhone(phone), date);
+}
+
 /**
  * Limpa conversas expiradas
  */
@@ -148,7 +163,13 @@ export function cleanupExpiredConversations() {
  * Normaliza número de telefone
  */
 function normalizePhone(phone) {
-  return phone.replace(/\D/g, '');
+  return String(phone).replace(/\D/g, '');
+}
+
+function todayKey() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date());
 }
 
 /**

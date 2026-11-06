@@ -25,6 +25,7 @@ import {
   getUserByPhone 
 } from './services/database-service.js';
 import { findBestCategory } from './services/ai-service.js';
+import { startScheduler } from './services/scheduler-service.js';
 
 // Importa cliente apropriado baseado no modo
 let WhatsAppClient;
@@ -260,6 +261,7 @@ async function startBot() {
       console.log(`   POST ${wabaConfig.webhookUrl || '/webhook/whatsapp'} - Receber mensagens\n`);
     }
   });
+  startScheduler();
   
   // Iniciar cliente WhatsApp
   try {

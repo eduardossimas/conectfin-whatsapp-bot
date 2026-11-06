@@ -104,6 +104,14 @@ export const config = {
   MESSAGE_POLISH_MIN_LENGTH: Number(process.env.MESSAGE_POLISH_MIN_LENGTH || 40),
   MESSAGE_POLISH_SPLIT_MIN_LENGTH: Number(process.env.MESSAGE_POLISH_SPLIT_MIN_LENGTH || 400),
   MESSAGE_POLISH_BLOCK_DELAY_MS: Number(process.env.MESSAGE_POLISH_BLOCK_DELAY_MS || 500),
+
+  // Lembretes de contas a pagar
+  PAYMENT_REMINDER_TIME: process.env.PAYMENT_REMINDER_TIME || "09:00",
+  PAYMENT_REMINDER_TIMEZONE: process.env.PAYMENT_REMINDER_TIMEZONE || "America/Sao_Paulo",
+  PAYMENT_REMINDER_RECIPIENTS: (process.env.PAYMENT_REMINDER_RECIPIENTS || "")
+    .split(",")
+    .map((phone) => normalizeWhatsAppPhone(phone))
+    .filter(Boolean),
 };
 
 export { normalizeWhatsAppPhone };

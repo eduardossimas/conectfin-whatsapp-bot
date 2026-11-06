@@ -247,7 +247,7 @@ ${statusPagamento}`;
 /**
  * Lista contas a pagar (despesas pendentes)
  */
-async function executeGetPayables(params, context) {
+export async function executeGetPayables(params, context) {
   const { user } = context;
   const limit = params.limit || 20;
   
