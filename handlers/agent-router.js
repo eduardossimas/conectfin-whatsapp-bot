@@ -12,7 +12,12 @@ import { TOOLS, executeTool } from "../tools/index.js";
 import { sleep } from "../utils/helpers.js";
 import { config, isAllowedWhatsAppPhone, getPhoneVariants } from "../config/environment.js";
 import BaileysClient from '../baileys-client.js';
-import { addMessage, getConversationHistory } from "../services/conversation-memory.js";
+import {
+  addMessage,
+  getConversationHistory,
+  hasPaymentReminderBeenSent,
+  markPaymentReminderSent,
+} from "../services/conversation-memory.js";
 import { polishAndSend } from "../services/message-polish-service.js";
 import {
   endSupport,
@@ -40,6 +45,84 @@ const DAILY_CHOICE_MESSAGE =
   "1️⃣ Falar com o suporte\n" +
   "2️⃣ Usar o assistente para lançamentos ou relatórios\n\n" +
   "Responda *suporte* ou *assistente*.";
+
+export async function sendPaymentReminders(phone) {
+  console.log(`🔔 [REMINDER] Verificando lembrete para ${phone}`);
+  if (hasPaymentReminderBeenSent(phone)) {
+    console.log(`⏭️ [REMINDER] Lembrete já enviado hoje para ${phone}`);
+    return false;
+  }
+
+  const phoneVariants = getPhoneVariants(phone);
+  let user = null;
+  for (const variant of phoneVariants) {
+    user = await getUserByPhone(variant);
+    if (user) {
+      phone = variant;
+      break;
+    }
+  }
+
+  if (!user) {
+    console.warn(`⚠️ [REMINDER] Usuário não encontrado para ${phone}`);
+    return false;
+  }
+
+  const context = { user, from: phone, originalJid: phone };
+  const result = await executeTool("get_payables", { limit: 100 }, context);
+  if (!result.success) {
+    throw new Error(result.message || "Não foi possível consultar contas a pagar");
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const limitDate = new Date(today);
+  limitDate.setDate(limitDate.getDate() + 3);
+  const relevantItems = (result.data?.items || []).filter((item) => {
+    const dueDate = parseReminderDate(item.data_vencimento);
+    if (!dueDate) return false;
+    return dueDate <= limitDate;
+  }).slice(0, 10);
+
+  if (relevantItems.length === 0) {
+    console.log(`✅ [REMINDER] Nenhuma conta vencida ou próxima do vencimento para ${phone}`);
+    return false;
+  }
+
+  const list = relevantItems.map((item, index) =>
+    `${index + 1}. ${item.descricao} — ${formatReminderCurrency(item.valor)} (vence ${formatReminderDate(item.data_vencimento)})`
+  ).join("\n");
+  const overdueCount = relevantItems.filter((item) =>
+    parseReminderDate(item.data_vencimento) < today
+  ).length;
+  const title = overdueCount
+    ? `🔔 Lembrete: Você tem ${relevantItems.length} conta${relevantItems.length === 1 ? "" : "s"} vencendo nos próximos 3 dias ou vencida${relevantItems.length === 1 ? "" : "s"}:`
+    : `🔔 Lembrete: Você tem ${relevantItems.length} conta${relevantItems.length === 1 ? "" : "s"} vencendo nos próximos 3 dias:`;
+
+  const reminderMessage = `${title}\n${list}`;
+  await sendWhatsAppText(phone, reminderMessage);
+  addMessage(phone, "assistant", reminderMessage);
+  markPaymentReminderSent(phone);
+  console.log(`✅ [REMINDER] Lembrete enviado para ${phone}: ${relevantItems.length} conta(s)`);
+  return true;
+}
+
+function formatReminderCurrency(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function formatReminderDate(value) {
+  const [, month, day] = String(value).slice(0, 10).split("-");
+  return `${day}/${month}`;
+}
+
+function parseReminderDate(value) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
 
 function isSupportChoice(text = "") {
   return /\b(suporte|atendimento humano|falar com uma pessoa)\b/i.test(text);

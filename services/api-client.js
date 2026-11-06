@@ -200,6 +200,10 @@ class ConectFinAPI {
     return this.get(`/users/by-phone/${encodeURIComponent(phone)}`);
   }
 
+  async getAllUsers() {
+    return this.get("/admin/users");
+  }
+
   /**
    * TRANSAÇÕES (LANÇAMENTOS)
    */

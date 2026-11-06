@@ -26,6 +26,7 @@ import {
   getUserByPhone 
 } from './services/database-service.js';
 import { findBestCategory } from './services/ai-service.js';
+import { startScheduler } from './services/scheduler-service.js';
 
 // ======================= EXPRESS APP =======================
 const app = express();
@@ -143,6 +144,7 @@ async function startBot() {
     console.log(`🌐 [SERVER] http://localhost:${config.PORT}`);
     console.log(`📱 [AUTH] Número autorizado: ${config.ALLOWED_WHATSAPP}\n`);
   });
+  startScheduler();
   
   // Iniciar Baileys
   console.log('📱 [BAILEYS] Conectando ao WhatsApp...');
